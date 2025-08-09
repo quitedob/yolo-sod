@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     """解析命令行参数"""
     p = argparse.ArgumentParser()
     p.add_argument("--model", type=str,
-                   default="ultralytics/cfg/models/new/yolov12-mambafusion-smallobj.yaml",
+                   default="ultralytics/cfg/models/new/yolov12-mambafusion-smallobj-640.yaml",
                    help="模型配置文件路径")
     p.add_argument("--data", type=str,
                    default="ultralytics/cfg/datasets/VisDrone.yaml",
@@ -56,10 +56,10 @@ def parse_args() -> argparse.Namespace:
                    help="超参数配置文件路径")
     p.add_argument("--epochs", type=int, default=300, help="训练轮数")
     p.add_argument("--batch", type=int, default=16, help="批大小")
-    p.add_argument("--imgsz", type=int, default=960, help="图像尺寸")
+    p.add_argument("--imgsz", type=int, default=640, help="图像尺寸")
     p.add_argument("--device", type=str, default="0", help="设备")
     p.add_argument("--project", type=str, default="runs/train", help="输出根目录")
-    p.add_argument("--name", type=str, default="yolov12_mf_smallobj_visdrone", help="实验名")
+    p.add_argument("--name", type=str, default="yolov12_mf_smallobj_visdrone640", help="实验名")
     p.add_argument("--exist_ok", action="store_true", help="覆盖已存在目录")
     p.add_argument("--workers", type=int, default=8, help="Dataloader线程数")
     p.add_argument("--amp", action="store_true", default=True, help="开启AMP")
