@@ -1,0 +1,78 @@
+# ultralytics/cfg/datasets/visdrone.yaml  
+# VisDrone-DET2019数据集配置文件
+# Vision Meets Drone Challenge - 航拍小目标检测数据集
+
+# 数据集路径配置
+path: ../datasets/visdrone  # 数据集根目录 (相对于运行脚本的位置)
+train: VisDrone2019-DET-train/images  # 训练集图像路径
+val: VisDrone2019-DET-val/images      # 验证集图像路径  
+test: VisDrone2019-DET-test-dev/images # 测试集图像路径
+
+# 类别配置
+nc: 10  # 类别数量
+
+# 类别名称 (VisDrone标准10类)
+names:
+  0: pedestrian        # 行人
+  1: people           # 人群  
+  2: bicycle          # 自行车
+  3: car              # 汽车
+  4: van              # 面包车
+  5: truck            # 卡车
+  6: tricycle         # 三轮车
+  7: awning-tricycle  # 遮阳篷三轮车
+  8: bus              # 公交车
+  9: motor            # 摩托车
+
+# 数据集统计信息 (用于归一化和可视化)
+download: |
+  # VisDrone数据集下载脚本
+  # 1. 访问 http://aiskyeye.com/ 官网
+  # 2. 下载 VisDrone2019-DET-train.zip, VisDrone2019-DET-val.zip
+  # 3. 解压到 datasets/visdrone/ 目录
+  # 
+  # 目录结构应为:
+  # datasets/visdrone/
+  # ├── VisDrone2019-DET-train/
+  # │   ├── images/          # 训练图像
+  # │   └── annotations/     # 训练标注
+  # ├── VisDrone2019-DET-val/
+  # │   ├── images/          # 验证图像  
+  # │   └── annotations/     # 验证标注
+  # └── VisDrone2019-DET-test-dev/
+  #     └── images/          # 测试图像
+  #
+  # 自动转换脚本 (从VisDrone格式转YOLO格式):
+  # python ultralytics/utils/convert_visdrone.py
+
+# 数据集特点
+# - 航拍视角，大量小目标
+# - 图像分辨率: 2000x1500左右  
+# - 密集场景，目标重叠严重
+# - 光照条件多样，天气变化大
+# - 训练集: 6471张图像
+# - 验证集: 548张图像  
+# - 测试集: 1610张图像
+
+# 评估配置
+val_split: 0.1        # 验证集比例 (如果没有单独验证集)
+rect: False           # 矩形训练 (关闭以保持长宽比)
+single_cls: False     # 单类别训练模式
+task: detect          # 任务类型: 检测
+
+# 小目标检测优化配置
+min_area: 1           # 最小目标面积 (像素)
+max_area: 1000000     # 最大目标面积
+small_obj_ratio: 0.7  # 小目标比例 (面积 < 32²像素)
+
+# 数据预处理
+pad: 0.0              # 填充比例
+mask_ratio: 4         # 掩码下采样比例  
+overlap_mask: True    # 重叠掩码处理
+mask_downsample_ratio: 1  # 掩码下采样
+
+# 增强策略 (配合hyp_visdrone_noaug.yaml使用时会被覆盖)
+augment: False        # 关闭数据增强
+cache: False          # 缓存图像到内存 (大数据集建议关闭)
+image_weights: False  # 图像加权采样
+multi_scale: False    # 多尺度训练
