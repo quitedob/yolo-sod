@@ -93,6 +93,8 @@ from .smallobj_modules import (
     HyperACEBlock,
     DecoupledHeadLite,
 )
+from .stable_fuse import ChannelNorm, ScaleAdd  # 导入稳定融合/归一化  # 中文注释
+from .detect_stable import DetectStable  # 导入可控Detect  # 中文注释
 from .transformer import (
     AIFI,
     MLP,
@@ -198,4 +200,8 @@ __all__ = (
     "OmniKernelFusion",
     "HyperACEBlock",
     "DecoupledHeadLite",
+    # stable fuse & detect
+    "ChannelNorm",
+    "ScaleAdd",
+    "DetectStable",
 )

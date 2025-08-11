@@ -895,15 +895,24 @@ class Attention(nn.Module):
     def __init__(self, dim, num_heads=8, attn_ratio=0.5):
         """Initializes multi-head attention module with query, key, and value convolutions and positional encoding."""
         super().__init__()
-        self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-        self.key_dim = int(self.head_dim * attn_ratio)
-        self.scale = self.key_dim**-0.5
-        nh_kd = self.key_dim * num_heads
-        h = dim + nh_kd * 2
-        self.qkv = Conv(dim, h, 1, act=False)
-        self.proj = Conv(dim, dim, 1, act=False)
-        self.pe = Conv(dim, dim, 3, 1, g=dim, act=False)
+        self.num_heads = num_heads                              # 注意力头数
+        self.head_dim = dim // num_heads                        # 每头维度D
+        self.key_dim = int(self.head_dim * attn_ratio)          # 键/查询维度Kd（可小于D）
+        self.scale = self.key_dim**-0.5                         # 归一化缩放因子
+        nh_kd = self.key_dim * num_heads                        # 总的Q/K通道数
+        h = dim + nh_kd * 2                                     # qkv拼接后的通道数
+        self.qkv = Conv(dim, h, 1, act=False)                   # 生成QKV的1x1卷积
+        self.proj = Conv(dim, dim, 1, act=False)                # 输出投影1x1卷积
+        self.pe = Conv(dim, dim, 3, 1, g=dim, act=False)        # 位置编码卷积（深度可分离）
+
+        # 若 Kd != D，则为 SageAttention2 提供Q/K升维投影，避免维度不匹配（惰性使用）
+        self.enable_sage_qk_proj = self.key_dim != self.head_dim               # 是否需要投影标记
+        if self.enable_sage_qk_proj:                                           # 当Kd!=D时
+            self.q_proj_sage = nn.Linear(self.key_dim, self.head_dim, bias=False)  # Q升维线性层
+            self.k_proj_sage = nn.Linear(self.key_dim, self.head_dim, bias=False)  # K升维线性层
+
+        # 缓存一次性探测结果：首个前向若Sage成功，则后续固定走Sage；否则永久回退原实现
+        self._sage_ok = None                                                  # None=未探测；True=用Sage；False=回退
 
     def forward(self, x):
         """
@@ -915,18 +924,54 @@ class Attention(nn.Module):
         Returns:
             (torch.Tensor): The output tensor after self-attention.
         """
-        B, C, H, W = x.shape
-        N = H * W
-        qkv = self.qkv(x)
+        B, C, H, W = x.shape                                    # 读取批次与通道空间尺寸
+        N = H * W                                                # 序列长度N
+        qkv = self.qkv(x)                                        # 生成QKV特征
         q, k, v = qkv.view(B, self.num_heads, self.key_dim * 2 + self.head_dim, N).split(
             [self.key_dim, self.key_dim, self.head_dim], dim=2
-        )
+        )                                                        # 按维度切分Q/K/V
 
-        attn = (q.transpose(-2, -1) @ k) * self.scale
-        attn = attn.softmax(dim=-1)
-        x = (v @ attn.transpose(-2, -1)).view(B, C, H, W) + self.pe(v.reshape(B, C, H, W))
-        x = self.proj(x)
-        return x
+        # 预先计算位置编码项（保持与原逻辑一致）
+        pp = self.pe(v.reshape(B, C, H, W))                      # 位置编码对V的卷积
+
+        # —— 优先尝试 SageAttention2（需：可用 + 环境开关 + CUDA + 半精度/ BF16）——
+        use_sage = (
+            _HAS_SAGEATTN2 and os.environ.get("SAGEATTN_ENABLE", "0") == "1"
+            and x.is_cuda and (q.dtype in (torch.float16, torch.bfloat16))
+        )                                                        # 计算是否启用Sage路径
+
+        if use_sage and self._sage_ok is not False:
+            # 重排到(B, H, N, Dq/Dk/Dv)
+            q_hnd = q.permute(0, 1, 3, 2).contiguous()           # (B,H,N,Kd)
+            k_hnd = k.permute(0, 1, 3, 2).contiguous()           # (B,H,N,Kd)
+            v_hnd = v.permute(0, 1, 3, 2).contiguous()           # (B,H,N,D)
+            # 若Kd!=D，使用线性层升维到D
+            if self.enable_sage_qk_proj:
+                q_hnd = self.q_proj_sage(q_hnd)                  # (B,H,N,D)
+                k_hnd = self.k_proj_sage(k_hnd)                  # (B,H,N,D)
+            if self._sage_ok is None:
+                try:
+                    torch.cuda.synchronize()
+                    attn_out = sageattn2(q_hnd, k_hnd, v_hnd, tensor_layout="HND", is_causal=False)  # (B,H,N,D)
+                    torch.cuda.synchronize()
+                    y = attn_out.permute(0, 1, 3, 2).contiguous().reshape(B, C, H, W)
+                    out = y + pp
+                    self._sage_ok = True
+                    return self.proj(out)
+                except Exception:
+                    self._sage_ok = False
+            else:
+                attn_out = sageattn2(q_hnd, k_hnd, v_hnd, tensor_layout="HND", is_causal=False)
+                y = attn_out.permute(0, 1, 3, 2).contiguous().reshape(B, C, H, W)
+                out = y + pp
+                return self.proj(out)
+
+        # —— 回退路径：原生 softmax 自注意力 ——
+        attn = (q.transpose(-2, -1) @ k) * self.scale            # 点积注意力分数
+        attn = attn.softmax(dim=-1)                              # softmax 归一化
+        y = (v @ attn.transpose(-2, -1)).view(B, C, H, W)        # 聚合得到输出
+        y = y + pp                                               # 残差加位置编码
+        return self.proj(y)                                      # 输出投影
 
 
 class PSABlock(nn.Module):
@@ -955,7 +1000,7 @@ class PSABlock(nn.Module):
         """Initializes the PSABlock with attention and feed-forward layers for enhanced feature extraction."""
         super().__init__()
 
-        self.attn = Attention(c, attn_ratio=attn_ratio, num_heads=num_heads)
+        self.attn = Attention(c, attn_ratio=attn_ratio, num_heads=num_heads)  # 内部已具备SageAttention2优先与回退
         self.ffn = nn.Sequential(Conv(c, c * 2, 1), Conv(c * 2, c, 1, act=False))
         self.add = shortcut
 
@@ -1166,6 +1211,7 @@ class TorchVision(nn.Module):
         return y
 
 import logging
+import os  # 引入os以读取环境变量，控制是否启用SageAttention2
 logger = logging.getLogger(__name__)
 
 USE_FLASH_ATTN = False
@@ -1180,6 +1226,28 @@ try:
 except Exception:
     from torch.nn.functional import scaled_dot_product_attention as sdpa
     logger.warning("FlashAttention is not available on this device. Using scaled_dot_product_attention instead.")
+
+# —— 可选导入 SageAttention2（与 smallobj_modules 保持一致的启用策略） ——
+_HAS_SAGEATTN2 = False  # 标记：是否可用 SageAttention2  # 中文注释
+sageattn2 = None        # 句柄占位：指向 sageattention.sageattn  # 中文注释
+try:
+    # 优先尝试已安装依赖  # 中文注释
+    from sageattention import sageattn as _sageattn
+    sageattn2 = _sageattn  # 绑定至本地变量  # 中文注释
+    _HAS_SAGEATTN2 = True  # 可用  # 中文注释
+except Exception:
+    # 兼容本地源码目录 /workspace/SageAttention  # 中文注释
+    sa_root = "/workspace/SageAttention"  # 中文注释
+    if os.path.isdir(sa_root):  # 若目录存在  # 中文注释
+        import sys as _sys  # 引入sys以修改路径  # 中文注释
+        if sa_root not in _sys.path:  # 若未在路径中  # 中文注释
+            _sys.path.append(sa_root)  # 动态添加  # 中文注释
+        try:
+            from sageattention import sageattn as _sageattn  # 再次尝试导入  # 中文注释
+            sageattn2 = _sageattn  # 绑定  # 中文注释
+            _HAS_SAGEATTN2 = True  # 可用  # 中文注释
+        except Exception:
+            _HAS_SAGEATTN2 = False  # 保持不可用  # 中文注释
 
 class AAttn(nn.Module):
     """
@@ -1221,6 +1289,9 @@ class AAttn(nn.Module):
 
         self.pe = Conv(all_head_dim, dim, 5, 1, 2, g=dim, act=False)
 
+        # 缓存一次性探测结果：首个前向若Sage成功，则后续固定走Sage；否则永久回退原实现
+        self._sage_ok = None  # None=未探测；True=使用Sage；False=使用原实现
+
 
     def forward(self, x):
         """Processes the input tensor 'x' through the area-attention"""
@@ -1232,34 +1303,58 @@ class AAttn(nn.Module):
         pp = self.pe(v)
         v = v.flatten(2).transpose(1, 2)
 
-        if self.area > 1:
-            qk = qk.reshape(B * self.area, N // self.area, C * 2)
-            v = v.reshape(B * self.area, N // self.area, C)
-            B, N, _ = qk.shape
-        q, k = qk.split([C, C], dim=2)
+        if self.area > 1:  # 若进行区域划分，则等比缩短序列长度  # 中文注释
+            qk = qk.reshape(B * self.area, N // self.area, C * 2)  # 重整qk  # 中文注释
+            v = v.reshape(B * self.area, N // self.area, C)        # 重整v  # 中文注释
+            B, N, _ = qk.shape                                     # 覆盖B、N  # 中文注释
+        q, k = qk.split([C, C], dim=2)  # 切分得到q/k  # 中文注释
 
-        if x.is_cuda and USE_FLASH_ATTN:
-            q = q.view(B, N, self.num_heads, self.head_dim)
-            k = k.view(B, N, self.num_heads, self.head_dim)
-            v = v.view(B, N, self.num_heads, self.head_dim)
+        # —— 优先路径：SageAttention2（需：启用变量 + CUDA + 半精度/bfloat16） ——  # 中文注释
+        use_sage = (
+            _HAS_SAGEATTN2 and os.environ.get("SAGEATTN_ENABLE", "0") == "1"  # 开关打开  # 中文注释
+            and x.is_cuda and (q.dtype in (torch.float16, torch.bfloat16))       # CUDA + 半精度  # 中文注释
+        )
 
-            x = flash_attn_func(
-                q.contiguous().half(),
-                k.contiguous().half(),
-                v.contiguous().half()
-            ).to(q.dtype)
-        else:
-            q = q.transpose(1, 2).view(B, self.num_heads, self.head_dim, N)
-            k = k.transpose(1, 2).view(B, self.num_heads, self.head_dim, N)
-            v = v.transpose(1, 2).view(B, self.num_heads, self.head_dim, N)
+        if use_sage and self._sage_ok is not False:
+            # 形状调整到 HND：(B, Heads, N, HeadDim)
+            q_hnd = q.view(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
+            k_hnd = k.view(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
+            v_hnd = v.view(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
+            if self._sage_ok is None:
+                try:
+                    torch.cuda.synchronize()
+                    attn_out = sageattn2(q_hnd, k_hnd, v_hnd, tensor_layout="HND", is_causal=False)
+                    torch.cuda.synchronize()
+                    x = attn_out.permute(0, 2, 1, 3).contiguous()
+                    self._sage_ok = True
+                except Exception:
+                    self._sage_ok = False
+            else:
+                attn_out = sageattn2(q_hnd, k_hnd, v_hnd, tensor_layout="HND", is_causal=False)
+                x = attn_out.permute(0, 2, 1, 3).contiguous()
 
-            attn = (q.transpose(-2, -1) @ k) * (self.head_dim ** -0.5)
-            max_attn = attn.max(dim=-1, keepdim=True).values
-            exp_attn = torch.exp(attn - max_attn)
-            attn = exp_attn / exp_attn.sum(dim=-1, keepdim=True)
-            x = (v @ attn.transpose(-2, -1))
+        if (not use_sage) or (self._sage_ok is False):
+            if x.is_cuda and USE_FLASH_ATTN:  # 次优路径：FlashAttention  # 中文注释
+                q = q.view(B, N, self.num_heads, self.head_dim)  # (B,N,H,D)  # 中文注释
+                k = k.view(B, N, self.num_heads, self.head_dim)  # (B,N,H,D)  # 中文注释
+                v = v.view(B, N, self.num_heads, self.head_dim)  # (B,N,H,D)  # 中文注释
 
-            x = x.permute(0, 3, 1, 2)
+                x = flash_attn_func(  # 执行FlashAttention  # 中文注释
+                    q.contiguous().half(),
+                    k.contiguous().half(),
+                    v.contiguous().half()
+                ).to(q.dtype)
+            else:  # 兜底路径：手写/SDPA  # 中文注释
+                q = q.transpose(1, 2).view(B, self.num_heads, self.head_dim, N)  # (B,H,D,N)  # 中文注释
+                k = k.transpose(1, 2).view(B, self.num_heads, self.head_dim, N)  # (B,H,D,N)  # 中文注释
+                v = v.transpose(1, 2).view(B, self.num_heads, self.head_dim, N)  # (B,H,D,N)  # 中文注释
+
+                attn = (q.transpose(-2, -1) @ k) * (self.head_dim ** -0.5)  # (B,H,N,N)  # 中文注释
+                max_attn = attn.max(dim=-1, keepdim=True).values            # 数值稳定max  # 中文注释
+                exp_attn = torch.exp(attn - max_attn)                        # 指数化  # 中文注释
+                attn = exp_attn / exp_attn.sum(dim=-1, keepdim=True)        # 归一化  # 中文注释
+                x = (v @ attn.transpose(-2, -1))                             # (B,H,D,N)  # 中文注释
+                x = x.permute(0, 3, 1, 2)                                    # (B,N,H,D)  # 中文注释
 
         if self.area > 1:
             x = x.reshape(B // self.area, N * self.area, C)

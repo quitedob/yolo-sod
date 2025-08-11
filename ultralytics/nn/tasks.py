@@ -10,6 +10,7 @@ from pathlib import Path
 import thop
 import torch
 import torch.nn as nn
+from ultralytics.nn import modules as u_modules  # 备用解析：从模块包获取自定义层  # 中文注释
 
 from ultralytics.nn.modules import (
     AIFI,
@@ -82,6 +83,10 @@ from ultralytics.nn.modules import (
     OmniKernelFusion,
     HyperACEBlock,
     DecoupledHeadLite,
+    # stable fuse & detect
+    ChannelNorm,
+    ScaleAdd,
+    DetectStable,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -974,7 +979,15 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
     layers_def = d.get("backbone", []) + d.get("neck", []) + d.get("head", [])
     for i, (f, n, m, args) in enumerate(layers_def):  # from, number, module, args
-        m = getattr(torch.nn, m[3:]) if "nn." in m else globals()[m]  # get module
+        # 解析模块名：优先 torch.nn，随后 tasks 全局，再回退 ultralytics.nn.modules 包  # 中文注释
+        if isinstance(m, str):  # 仅当为字符串时解析  # 中文注释
+            if "nn." in m:
+                m = getattr(torch.nn, m[3:])  # 解析标准nn模块  # 中文注释
+            else:
+                m_obj = globals().get(m, None)  # 尝试在当前命名空间查找  # 中文注释
+                if m_obj is None:
+                    m_obj = getattr(u_modules, m)  # 回退到模块包查找  # 中文注释
+                m = m_obj  # 使用解析到的模块对象  # 中文注释
         for j, a in enumerate(args):
             if isinstance(a, str):
                 with contextlib.suppress(ValueError):
@@ -1015,6 +1028,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             SCDown,
             C2fCIB,
             A2C2f,
+            VimBlock,              # 参与c1/c2注入与width缩放
+            CompactInvertedBlock,  # 参与c1/c2注入与width缩放
         }:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)
@@ -1068,7 +1083,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
-        elif m is Add:
+        elif m in {Add, ScaleAdd}:
             # Add: 通道不变，要求各分支通道一致
             if isinstance(f, (list, tuple)):
                 c2 = ch[f[0]]
@@ -1089,11 +1104,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         elif m in {SE, MixedAttention}:
             # SE/MixedAttention: 保持通道不变
             c2 = ch[f]
-        elif m in {Detect, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect}:
+        elif m in {Detect, DetectStable, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect}:
             args.append([ch[x] for x in f])
             if m is Segment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
-            if m in {Detect, Segment, Pose, OBB}:
+            if m in {Detect, DetectStable, Segment, Pose, OBB}:
                 m.legacy = legacy
         elif m is RTDETRDecoder:  # special case, channels arg must be passed in index 1
             args.insert(1, [ch[x] for x in f])
