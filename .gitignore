@@ -27,4 +27,6 @@ models/
 dist
 .ipynb_checkpoints
 *.pth
+runs_stable_diffusion/
+runs/
 *.pt
