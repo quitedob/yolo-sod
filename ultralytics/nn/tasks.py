@@ -82,6 +82,7 @@ from ultralytics.nn.modules import (
     SpaceToDepth,
     OmniKernelFusion,
     HyperACEBlock,
+    HyperACEBlockStable,
     DecoupledHeadLite,
     # stable fuse & detect
     ChannelNorm,
@@ -1099,6 +1100,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             c2 = int(args[1])
         elif m is HyperACEBlock:
             # HyperACEBlock: 输出通道由 args[2] 指定
+            # args: [ch_high, ch_low, ch_out]
+            c2 = int(args[2])
+        elif m is HyperACEBlockStable:
+            # HyperACEBlockStable: 输出通道由 args[2] 指定
             # args: [ch_high, ch_low, ch_out]
             c2 = int(args[2])
         elif m in {SE, MixedAttention}:

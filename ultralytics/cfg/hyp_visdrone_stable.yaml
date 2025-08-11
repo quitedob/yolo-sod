@@ -1,8 +1,8 @@
 # 文件路径：/workspace/yolo/ultralytics/cfg/hyp_visdrone_stable.yaml  # 稳定化训练超参
 
 # —— 损失项权重（偏保守） ——  # 中文注释
-box: 7.5      # 边框损失权重  # 中文注释
-cls: 2.0      # 分类损失权重  # 中文注释
+box: 8.0      # 边框损失权重  # 中文注释
+cls: 0.3      # 分类损失权重（大幅下调）  # 中文注释
 dfl: 1.0      # 分布式焦点损失权重  # 中文注释
 fl_gamma: 0.5 # Focal Loss gamma 再下调，初期弱化困难样本放大  # 中文注释
 label_smoothing: 0.05  # 轻微标签平滑，降低分类尖锐度  # 中文注释
@@ -19,8 +19,8 @@ shear: 0.0    # 切变  # 中文注释
 perspective: 0.0  # 透视变换  # 中文注释
 flipud: 0.0   # 垂直翻转  # 中文注释
 fliplr: 0.5   # 水平翻转  # 中文注释
-mosaic: 0.7   # 马赛克概率  # 中文注释
-mixup: 0.05   # 混合概率  # 中文注释
-copy_paste: 0.1  # 复制粘贴概率  # 中文注释
+mosaic: 0.0   # 马赛克概率（阶段1建议0）  # 中文注释
+mixup: 0.0    # 混合概率  # 中文注释
+copy_paste: 0.0  # 复制粘贴概率  # 中文注释
 
 
