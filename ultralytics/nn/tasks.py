@@ -88,6 +88,7 @@ from ultralytics.nn.modules import (
     ChannelNorm,
     ScaleAdd,
     DetectStable,
+    RecurrentAttentionFusionBlock,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1031,6 +1032,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             A2C2f,
             VimBlock,              # 参与c1/c2注入与width缩放
             CompactInvertedBlock,  # 参与c1/c2注入与width缩放
+            RecurrentAttentionFusionBlock,  # 自定义RAFB: 参与c1/c2注入与width缩放  # 中文注释
         }:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if c2 not equal to number of classes (i.e. for Classify() output)

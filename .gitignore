@@ -30,3 +30,6 @@ dist
 runs_stable_diffusion/
 runs/
 *.pt
+runs_advanced
+assets
+tests
