@@ -1,0 +1,15 @@
+# /workspace/yolo/ultralytics/cfg/new/hyp_500.yaml
+# 中文注释：把学习率/优化器/损失权重等搬到 hyp，避免命令行不兼容
+lr0: 0.01
+lrf: 0.01
+optimizer: 'auto'
+momentum: 0.937
+weight_decay: 0.0005
+box: 7.5
+cls: 0.5
+dfl: 1.5
+# 边界感知损失（由回调读取）
+edge_weight: 1.0
+bce_weight: 1.0
+iou_weight: 0.0
+boundary_loss_weight: 0.2
