@@ -90,6 +90,10 @@ from ultralytics.nn.modules import (
     DetectStable,
     RecurrentAttentionFusionBlock,
     BiLevelRoutingAttentionFusionBlock,
+    # custom fusion modules
+    MambaBlock,
+    SwinBlock, 
+    DETRAuxHead,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1110,15 +1114,25 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             # HyperACEBlockStable: 输出通道由 args[2] 指定
             # args: [ch_high, ch_low, ch_out]
             c2 = int(args[2])
-        elif m in {SE, MixedAttention}:
-            # SE/MixedAttention: 保持通道不变
+        elif m in {SE, MixedAttention, MambaBlock, SwinBlock}:
+            # SE/MixedAttention/MambaBlock/SwinBlock: 保持通道不变
             c2 = ch[f]
-        elif m in {Detect, DetectStable, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect}:
-            args.append([ch[x] for x in f])
+            # MambaBlock和SwinBlock的参数处理  # 中文注释
+            if m in {MambaBlock, SwinBlock}:
+                args = [ch[f], *args]  # 传入输入通道数作为第一个参数
+        elif m in {Detect, DetectStable, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect, DETRAuxHead}:
+            # 确保f是列表，处理单输入和多输入情况  # 中文注释
+            f_list = f if isinstance(f, (list, tuple)) else [f]
+            args.append([ch[x] for x in f_list])
             if m is Segment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
             if m in {Detect, DetectStable, Segment, Pose, OBB}:
                 m.legacy = legacy
+            # DETRAuxHead特殊处理: 输入通道、查询数、类别数、隐藏维度、头数  # 中文注释
+            elif m is DETRAuxHead:
+                # args格式: [input_channels, num_queries, num_classes, hidden_dim, num_heads]
+                if len(args) >= 3:
+                    args[2] = nc  # 确保类别数正确
         elif m is RTDETRDecoder:  # special case, channels arg must be passed in index 1
             args.insert(1, [ch[x] for x in f])
         elif m in {CBLinear, TorchVision, Index}:

@@ -148,7 +148,7 @@ def main():
     parser = argparse.ArgumentParser(description='YOLO-SOD-Fusion增强版训练脚本')
     
     # 基础训练参数
-    parser.add_argument('--cfg', default='/workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-all.yaml',
+    parser.add_argument('--cfg', default='/workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-detect-only.yaml',
                        help='模型配置文件路径')
     parser.add_argument('--data', required=True, help='数据集配置文件路径')
     parser.add_argument('--epochs', type=int, default=500, help='训练轮数')

@@ -69,7 +69,7 @@ echo "=============================================="
 # 执行训练脚本，启用所有增强功能
 # /workspace/yolo/start.sh  【仅修改训练命令一处，添加 --hyp 参数】  # 中文注释
 python /workspace/yolo/train.py \
-    --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-all.yaml \
+    --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-detect-only.yaml \
     --data "$DATA_PATH" \
     --epochs $EPOCHS \
     --imgsz $IMG_SIZE \
