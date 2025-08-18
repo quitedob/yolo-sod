@@ -1,154 +1,222 @@
 # /workspace/yolo/train.py
-# 说明：
-# 1) 新增 --task {auto,detect,segment}，默认 auto；
-# 2) 自动从 YAML 判别是否包含 Segment 头；若 detect-only 则强制用 detect；
-# 3) 边界损失与 P2 开关、DETR-Aux 回调仅在对应任务/模块存在时启用；
-# 4) 中文注释，逻辑清晰。
+# 中文说明：
+# 1) 稳健读取YAML（若失败回退文本再safe_load）
+# 2) 把“解析后的dict”直接传给 YOLO(...)，避免内部再次不稳定解析
+# 3) 注册 DetectStable 到 ultralytics.nn.modules 命名空间
+# 4) 自动判定任务：若文本含 Segment，则优先选择 'segment'；否则 'detect'
 
-import os, sys, yaml, argparse
-from pathlib import Path
+import os, re, yaml
 from ultralytics import YOLO
 
-# ========== 工具：判断 YAML 是否为分割头 ==========
-def yaml_has_segment_head(cfg_path: str) -> bool:
-    # 简单扫描 'Segment' 关键字（大多数 fork 可用；亦可改为解析结构）
+# ========== 自定义模块注册 ==========
+def register_custom_modules():
+    """注册自定义算子到 Ultralytics 命名空间（Mamba/Swin/DETR-Aux/边界损失/追踪/DetectStable）"""
+    import ultralytics.nn.modules as U
+    # 可选：Mamba
     try:
-        with open(cfg_path, 'r', encoding='utf-8') as f:
+        from ultralytics.nn.modules.blocks_mamba import MambaBlock
+        U.MambaBlock = MambaBlock
+    except Exception as e:
+        print(f"[WARN] MambaBlock 导入失败（mamba-ssm 可能未完全可用）：{e}")
+    # 其他模块
+    from ultralytics.nn.modules.blocks_transformer import SwinBlock
+    from ultralytics.nn.modules.heads_detr_aux import DETRAuxHead
+    from ultralytics.nn.modules.loss_boundary import BoundaryAwareLoss
+    from ultralytics.nn.modules.tracker_kf_lstm import MultiObjectTracker
+    U.SwinBlock = SwinBlock
+    U.DETRAuxHead = DETRAuxHead
+    U.BoundaryAwareLoss = BoundaryAwareLoss
+    U.MultiObjectTracker = MultiObjectTracker
+    # ★ 注册 DetectStable（若 YAML 用到了它，必须注册）
+    try:
+        from ultralytics.nn.modules.detect_stable import DetectStable
+        U.DetectStable = DetectStable
+    except Exception as e:
+        print(f"[WARN] DetectStable 导入失败：{e}")
+    print("[INFO] 成功注册自定义模块: MambaBlock, SwinBlock, DETRAuxHead")
+
+# ========== YAML 读取/判定 ==========
+def _read_text(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+def _ultra_yaml_load(path: str):
+    """优先用 Ultralytics 的 yaml_load；失败则返回 Exception 让上层兜底"""
+    from ultralytics.utils import yaml_load, checks
+    return yaml_load(checks.check_yaml(path))
+
+# /workspace/yolo/train.py  —— 替换此函数
+def load_model_yaml_as_dict(path: str) -> dict:
+    """
+    稳健加载模型YAML为 dict：
+    1) 先尝试 ultralytics.utils.yaml_load
+    2) 失败则读原文再用 yaml.safe_load
+    3) 若存在顶级 'neck:'，则把 neck 列表按顺序并入 head 列表（顶级只保留 backbone/head）
+    4) 最终确保至少存在 backbone 与 head 两段
+    """
+    import yaml
+    import os
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"模型配置文件未找到: {path}")
+
+    # 优先：Ultralytics 自带 loader（更兼容）
+    try:
+        from ultralytics.utils import yaml_load, checks
+        cfg = yaml_load(checks.check_yaml(path))
+    except Exception as e:
+        print(f"[WARN] Ultralytics yaml_load 失败，回退到 yaml.safe_load：{e}")
+        # 回退：读取原文再 safe_load
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
             txt = f.read()
-        return 'Segment' in txt or 'segment' in txt
-    except Exception:
-        return False
+        try:
+            cfg = yaml.safe_load(txt)
+        except Exception as e2:
+            raise ValueError(f"[错误] 无法解析 YAML: {path}，原始异常：{e2}")
 
-# ========== 工具：注册自定义模块 ==========
-def register_plugins():
-    import importlib, ultralytics.nn.modules as U
-    try:
-        bm = importlib.import_module('ultralytics.nn.modules.blocks_mamba')
-    except Exception:
-        bm = importlib.import_module('plugins.blocks_mamba')  # 兼容你把插件放在 plugins 下的情况
-    try:
-        bt = importlib.import_module('ultralytics.nn.modules.blocks_transformer')
-    except Exception:
-        bt = importlib.import_module('plugins.blocks_transformer')
-    try:
-        da = importlib.import_module('ultralytics.nn.modules.heads_detr_aux')
-    except Exception:
-        da = importlib.import_module('plugins.heads_detr_aux')
+    if not isinstance(cfg, dict):
+        raise ValueError(f"[错误] {path} 未解析为字典，请检查YAML语法。")
 
-    U.MambaBlock  = getattr(bm, 'MambaBlock')
-    U.SwinBlock   = getattr(bt, 'SwinBlock')
-    U.DETRAuxHead = getattr(da, 'DETRAuxHead')
-    print('[INFO] 成功注册自定义模块: MambaBlock, SwinBlock, DETRAuxHead')
+    # ★ 关键修复：若存在顶级 neck，则并入 head，顶级只保留 backbone/head
+    has_backbone = "backbone" in cfg
+    has_head = "head" in cfg
+    has_neck = "neck" in cfg
 
-# ========== 回调：P2关闭/开启 ==========
-def make_p2_toggle_cb(close_p2_until:int=30):
-    global_epoch = {'n': 0}
+    if has_neck:
+        neck_block = cfg.get("neck") or []
+        head_block = cfg.get("head") or []
+        if not isinstance(neck_block, list) or not isinstance(head_block, list):
+            raise ValueError(f"[错误] {path} 中 neck/head 不是列表，请检查YAML。")
+        # 先 neck，再原 head，保持执行顺序一致
+        merged_head = list(neck_block) + list(head_block)
+        cfg["head"] = merged_head
+        # 删除顶级 neck，符合 Ultralytics 仅识别 backbone/head 的习惯
+        del cfg["neck"]
+        has_head = True  # 合并后必然有 head
+
+    # 最终检查：至少 backbone 与 head 同时存在
+    if not has_backbone or not has_head:
+        # 这里给出具体提示，方便你检查
+        top_keys = ", ".join(cfg.keys())
+        raise ValueError(
+            f"[错误] {path} 缺少 'backbone' 或 'head'。当前顶级键：[{top_keys}]。\n"
+            f"若原本存在 'neck:'，请确认已正确合并到 'head:'。"
+        )
+
+    return cfg
+
+# ========== 回调：P2 启停 & 边界损失（与之前相同，略） ==========
+def create_p2_toggle_callback(close_p2_until: int = 30):
+    epoch_counter = {"count": 0}
     def _cb(trainer):
         try:
             from ultralytics.nn.modules.detect_stable import DetectStable
-        except Exception:
-            return
-        n = global_epoch['n']
-        for m in trainer.model.modules():
-            if isinstance(m, DetectStable):
-                # 前N轮关闭P2（仅 DetectStable 有 set_active_mask）
-                try:
-                    m.set_active_mask([n >= close_p2_until, True, True, True])
-                except Exception:
-                    pass
-        global_epoch['n'] += 1
+            ep = epoch_counter["count"]
+            for m in trainer.model.modules():
+                if isinstance(m, DetectStable):
+                    active = [ep >= close_p2_until, True, True, True]
+                    m.set_active_mask(active)
+            epoch_counter["count"] += 1
+            if ep == close_p2_until:
+                print(f"[INFO] 第 {close_p2_until} 轮：P2 尺度已开启")
+        except Exception as e:
+            print(f"[WARN] P2 回调失败: {e}")
     return _cb
 
-# ========== 回调：边界感知损失 ==========
-def make_boundary_loss_cb(weight=0.2, edge_w=1.0, bce_w=1.0, iou_w=0.0):
-    try:
-        from plugins.loss_boundary import BoundaryAwareLoss
-    except Exception:
-        from ultralytics.nn.modules.loss_boundary import BoundaryAwareLoss
-    bal = BoundaryAwareLoss(edge_weight=edge_w, bce_weight=bce_w, iou_weight=iou_w)
+def create_boundary_loss_callback(edge_weight=1.0, bce_weight=1.0, iou_weight=0.0, loss_weight=0.2):
+    from ultralytics.nn.modules.loss_boundary import BoundaryAwareLoss
+    fn = BoundaryAwareLoss(edge_weight=edge_weight, bce_weight=bce_weight, iou_weight=iou_weight)
     def _cb(trainer):
-        # 仅在 segment 任务下尝试取掩码
         try:
-            batch = getattr(trainer, 'batch', None)
-            pm    = getattr(trainer, 'masks', None)  # 不同版本命名不同
-            if pm is None or batch is None or 'masks' not in batch:
+            batch = getattr(trainer, "batch", None)
+            pred_masks = None
+            for k in ("masks", "seg_masks", "pred_masks"):
+                v = getattr(trainer, k, None)
+                if v is not None:
+                    pred_masks = v; break
+            if pred_masks is None or batch is None or "masks" not in batch:
                 return
-            gt = batch['masks'].float()
-            pr = pm.float()
-            if pr.ndim == 4 and pr.shape[1] != 1: pr = pr[:, :1]
-            if gt.ndim == 4 and gt.shape[1] != 1: gt = gt[:, :1]
-            trainer.loss += bal(pr, gt) * weight
+            gt_masks = batch["masks"].float()
+            pred_masks = pred_masks.float()
+            if pred_masks.dim() == 4 and pred_masks.size(1) > 1:
+                pred_masks = pred_masks[:, :1]
+            if gt_masks.dim() == 4 and gt_masks.size(1) > 1:
+                gt_masks = gt_masks[:, :1]
+            trainer.loss += fn(pred_masks, gt_masks) * loss_weight
         except Exception:
             pass
     return _cb
 
-# ========== 回调：DETR-Aux（此处仅示例占位，实际蒸馏逻辑按需实现） ==========
-def make_detr_aux_cb():
-    def _cb(trainer):
-        # 这里留给你后续接匈牙利匹配与 L1/GIoU 的蒸馏实现
-        return
-    return _cb
-
+# ========== 主入口 ==========
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', required=True, help='模型yaml')
-    parser.add_argument('--data', required=True, help='数据集yaml')
-    parser.add_argument('--epochs', type=int, default=500)
-    parser.add_argument('--imgsz', type=int, default=640)
-    parser.add_argument('--batch', type=int, default=16)
-    parser.add_argument('--device', default='0')
-    parser.add_argument('--hyp', default=None)
-    parser.add_argument('--task', default='auto', choices=['auto','detect','segment'], help='训练任务类型')
-    parser.add_argument('--close_p2_until', type=int, default=30)
-    parser.add_argument('--use_boundary_loss', action='store_true')
-    parser.add_argument('--use_detr_aux', action='store_true')
-    args = parser.parse_args()
+    import argparse
+    p = argparse.ArgumentParser("YOLO-SOD-Fusion 训练脚本")
+    p.add_argument('--cfg', required=True, help='模型结构YAML路径')
+    p.add_argument('--data', required=True, help='数据集YAML路径')
+    p.add_argument('--epochs', type=int, default=500)
+    p.add_argument('--imgsz', type=int, default=640)
+    p.add_argument('--batch', type=int, default=16)
+    p.add_argument('--device', default='0')
+    p.add_argument('--workers', type=int, default=8)
+    p.add_argument('--hyp', default=None, help='训练覆盖超参YAML')
+    p.add_argument('--pretrained', default=False)
+    p.add_argument('--optimizer', default='auto')
+    p.add_argument('--lr0', type=float, default=0.01)
+    p.add_argument('--lrf', type=float, default=0.01)
+    p.add_argument('--use_boundary_loss', action='store_true')
+    p.add_argument('--close_p2_until', type=int, default=30)
+    p.add_argument('--use_detr_aux', action='store_true')
+    p.add_argument('--edge_weight', type=float, default=1.0)
+    p.add_argument('--bce_weight', type=float, default=1.0)
+    p.add_argument('--iou_weight', type=float, default=0.0)
+    p.add_argument('--boundary_loss_weight', type=float, default=0.2)
+    p.add_argument('--project', default='runs_fusion')
+    p.add_argument('--name', default='yolo_sod_fusion_exp')
+    args = p.parse_args()
 
-    # 任务类型判定：auto -> 基于 YAML 是否含 Segment 头
-    if args.task == 'auto':
-        inferred = 'segment' if yaml_has_segment_head(args.cfg) else 'detect'
-        print(f'[INFO] 基于 YAML 自动判定任务: {inferred}')
-        task = inferred
-    else:
-        task = args.task
+    print("[INFO] 正在注册自定义模块...")
+    register_custom_modules()
 
-    # 一致性强校验：detect-only YAML + segment 任务会直接报错，避免“过了构图、死在损失”
-    has_segment = yaml_has_segment_head(args.cfg)
-    if task == 'segment' and not has_segment:
-        raise RuntimeError(f"[配置不一致] 选择了 task=segment，但 {args.cfg} 不含 Segment 头；请改为 task=detect 或更换含 Segment 头的 YAML。")
-    if task == 'detect' and has_segment:
-        print("[WARNING] 选择了 task=detect，但 YAML 含 Segment 头；将按 detect 任务训练，只是不计算掩码损失。")
+    # 读取并校验模型YAML -> dict
+    cfg_dict = load_model_yaml_as_dict(args.cfg)
+    # 基于文本/内容自动判定任务（包含 Segment 则优先选 segment）
+    task = infer_task_from_text_or_cfg(args.cfg, cfg_dict)
+    print(f"[INFO] 基于 YAML 自动判定任务: {task}")
 
-    # 注册插件与构建模型
-    sys.path.append(str(Path(__file__).parent))  # 保底
-    register_plugins()
-    print('[INFO] 正在初始化YOLO模型...')
-    model = YOLO(args.cfg, task=task)
+    # ★ 关键：把 dict 直接传给 YOLO，避免内部再解析路径
+    print("[INFO] 正在初始化YOLO模型...")
+    model = YOLO(cfg_dict, task=task)
 
-    # 注册通用回调
+    # 回调
     if args.close_p2_until > 0:
-        model.add_callback('on_train_epoch_start', make_p2_toggle_cb(args.close_p2_until))
-
-    # 仅在 segment 任务下启用边界感知损失
+        model.add_callback('on_train_epoch_start', create_p2_toggle_callback(args.close_p2_until))
+        print(f"[INFO] 已启用 P2 启停（前 {args.close_p2_until} 轮关闭P2）")
     if task == 'segment' and args.use_boundary_loss:
-        model.add_callback('on_train_batch_end', make_boundary_loss_cb())
-
-    # DETR-Aux（与任务无强耦合；如你只想在 segment 下开，这里亦可加判断）
-    if args.use_detr_aux:
-        model.add_callback('on_train_batch_end', make_detr_aux_cb())
+        model.add_callback('on_train_batch_end', create_boundary_loss_callback(
+            edge_weight=args.edge_weight, bce_weight=args.bce_weight,
+            iou_weight=args.iou_weight, loss_weight=args.boundary_loss_weight))
+        print("[INFO] 已启用 边界感知损失")
 
     # 训练参数
     train_kwargs = dict(
-        data=args.data, epochs=args.epochs, imgsz=args.imgsz, batch=args.batch, device=args.device,
-        project='runs_fusion', name='yolo_sod_fusion_exp', exist_ok=True, pretrained=False, cos_lr=True,
-        deterministic=True, verbose=True
+        data=args.data, epochs=args.epochs, imgsz=args.imgsz, batch=args.batch,
+        device=args.device, workers=args.workers, project=args.project,
+        name=args.name, exist_ok=True, pretrained=args.pretrained,
+        optimizer=args.optimizer, lr0=args.lr0, lrf=args.lrf,
+        cos_lr=True, warmup_epochs=3, warmup_momentum=0.8,
+        weight_decay=0.0005, momentum=0.937, box=7.5, cls=0.5, dfl=1.5,
+        save=True, save_period=10, val=True, plots=True, verbose=True
     )
-    if args.hyp:  # ★ 把超参文件透传给 Ultralytics
-        train_kwargs.update({'cfg': args.hyp})
+    if args.hyp:
+        train_kwargs.update({'cfg': args.hyp})  # ulty 的训练覆盖键叫 cfg
 
+    print("[INFO] 开始训练...")
     results = model.train(**train_kwargs)
-    print('[INFO] 训练完成')
+    print("[INFO] 训练完成!")
+    print(f"best: {model.trainer.best}\nlast: {model.trainer.last}")
     return results
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

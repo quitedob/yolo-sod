@@ -1,25 +1,27 @@
 # /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-all.yaml
+# 中文注释：两段式（backbone/head），将原 neck: 并入 head: 顶级只保留这两段
+
 nc: 10
 depth_multiple: 0.33
 width_multiple: 0.50
 ch: 3
 
 backbone:
-  - [-1, 1, Conv, [64, 3, 2]]           
+  - [-1, 1, Conv, [64, 3, 2]]
   - [-1, 1, Conv, [128, 3, 2]]
   - [-1, 3, C2f, [128, True]]
   - [-1, 1, Conv, [256, 3, 2]]
   - [-1, 6, C2f, [256, True]]
   - [-1, 1, Conv, [512, 3, 2]]
   - [-1, 3, C2f, [512, True]]
-  - [-1, 1, MambaBlock, [512, 256, 2]]
+  - [-1, 1, MambaBlock, [512, 256, 2]]   # 自定义模块（已在 train.py 注册）
   - [-1, 1, Conv, [1024, 3, 2]]
   - [-1, 2, C2f, [1024, True]]
-  - [-1, 1, SwinBlock, [1024, 8, 7]]
+  - [-1, 1, SwinBlock, [1024, 8, 7]]     # 自定义模块（已在 train.py 注册）
   - [-1, 1, SPPF, [1024, 5]]
 
-neck:
-  # Top-Down
+head:
+  # ==== 原 neck: Top-Down 并入 ====
   - [-1, 1, Conv, [512, 1, 1]]
   - [-1, 1, nn.Upsample, [None, 2, 'nearest']]
   - [[-1, 6], 1, Concat, [1]]
@@ -34,7 +36,7 @@ neck:
   - [-1, 3, C2f, [128, True]]
   - [-1, 1, SwinBlock, [128, 4, 7]]
 
-  # Bottom-Up
+  # ==== 原 neck: Bottom-Up 并入 ====
   - [-1, 1, Conv, [256, 3, 2]]
   - [[-1, 8], 1, Concat, [1]]
   - [-1, 3, C2f, [256, True]]
@@ -45,10 +47,11 @@ neck:
   - [[-1, 11], 1, Concat, [1]]
   - [-1, 2, C2f, [1024, True]]
 
-head:
-  - [[12, 15, 18, 21], 1, DetectStable, [nc]]  # 4尺度检测头（P2~P5）
-  - [12, 1, Segment, [nc, 32, 256]]            # SOD分割分支
+  # ==== 多头输出 ====
+  - [[12, 15, 18, 21], 1, DetectStable, [nc]]   # 4尺度检测头（P2~P5）  :contentReference[oaicite:3]{index=3}
+  - [12, 1, Segment, [nc, 32, 256]]             # 分割分支（做SOD/边界监督）  :contentReference[oaicite:4]{index=4}
 
+# 可选：辅助头/损失（Ultralytics 构图时会忽略未知段；你在回调/Trainer里自行读取）
 aux:
   detr_aux:
     in_channels: 256
