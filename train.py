@@ -36,6 +36,51 @@ def register_custom_modules():
     print("[INFO] 成功注册自定义模块: MambaBlock, SwinBlock, DETRAuxHead")
 
 # ========== YAML 读取/判定 ==========
+def infer_task_from_text_or_cfg(cfg_path: str, cfg_dict: dict) -> str:
+    """
+    基于YAML配置文件路径和内容自动推断任务类型
+    Args:
+        cfg_path: YAML文件路径
+        cfg_dict: 解析后的配置字典
+    Returns:
+        任务类型: 'detect', 'segment', 'classify', 'pose' 等
+    """
+    # 1. 优先检查文件名中的关键词
+    cfg_filename = os.path.basename(cfg_path).lower()
+    if 'segment' in cfg_filename or 'seg' in cfg_filename:
+        return 'segment'
+    elif 'classify' in cfg_filename or 'cls' in cfg_filename:
+        return 'classify'  
+    elif 'pose' in cfg_filename or 'keypoint' in cfg_filename:
+        return 'pose'
+    
+    # 2. 检查配置字典中的关键信息
+    # 如果有分割相关的head或模块，推断为分割任务
+    head_info = cfg_dict.get('head', [])
+    if isinstance(head_info, list):
+        head_str = str(head_info).lower()
+        if 'segment' in head_str or 'mask' in head_str:
+            return 'segment'
+    
+    # 3. 检查辅助头信息
+    aux_head_info = cfg_dict.get('aux_head', [])
+    if isinstance(aux_head_info, list):
+        aux_head_str = str(aux_head_info).lower()
+        if 'segment' in aux_head_str or 'mask' in aux_head_str:
+            return 'segment'
+    
+    # 4. 检查整个配置文件内容
+    cfg_content = str(cfg_dict).lower()
+    if 'segment' in cfg_content or 'mask' in cfg_content:
+        return 'segment'
+    elif 'classify' in cfg_content or 'classification' in cfg_content:
+        return 'classify'
+    elif 'pose' in cfg_content or 'keypoint' in cfg_content:
+        return 'pose'
+    
+    # 5. 默认返回检测任务
+    return 'detect'
+
 def _read_text(path: str) -> str:
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -52,57 +97,102 @@ def _ultra_yaml_load(path: str):
 def load_model_yaml_as_dict(path: str) -> dict:
     """
     稳健加载模型YAML为 dict：
-    1) 先尝试 ultralytics.utils.yaml_load
-    2) 失败则读原文再用 yaml.safe_load
-    3) 若存在顶级 'neck:'，则把 neck 列表按顺序并入 head 列表（顶级只保留 backbone/head）
-    4) 最终确保至少存在 backbone 与 head 两段
+    A. 读取原文并“清洗”：去掉首行残留的 'yaml' / 去除 ``` 围栏 / 去BOM / 去两端空行
+    B. 先用 ultralytics.utils.yaml_load 尝试；失败或结果异常则用清洗后的文本再 safe_load
+    C. 若存在顶级 'neck:'，将 neck 列表顺序并入 head 列表（顶级只保留 backbone/head）
+    D. 最终确保存在 backbone 与 head 两段
     """
-    import yaml
-    import os
+    import os, io, re, yaml
     if not os.path.exists(path):
         raise FileNotFoundError(f"模型配置文件未找到: {path}")
 
-    # 优先：Ultralytics 自带 loader（更兼容）
+    def _read_text(fp: str) -> str:
+        with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+
+    def _clean_text(t: str) -> str:
+        # 1) 去掉 UTF-8 BOM
+        if t.startswith("\ufeff"):
+            t = t.lstrip("\ufeff")
+        # 2) 去掉 Markdown 代码围栏 ```xxx ... ```
+        t = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", t, flags=re.MULTILINE)
+        t = re.sub(r"\s*```(\s*#.*)?\s*$", "", t, flags=re.MULTILINE)
+        # 3) 去掉文件开头可能残留的语言标记行（如单独的 'yaml' 或 'yml'）
+        #    仅当它是“首个非空非注释行”时才剔除
+        lines = t.splitlines()
+        cleaned = []
+        removed_lang = False
+        seen_content = False
+        for i, ln in enumerate(lines):
+            s = ln.strip()
+            if not seen_content:
+                if s == "" or s.startswith("#"):
+                    cleaned.append(ln)
+                    continue
+                # 首个内容行：若就是 'yaml' / 'yml'，则跳过
+                if s.lower() in {"yaml", "yml"}:
+                    removed_lang = True
+                    continue
+                # 其他情况：正常内容
+                seen_content = True
+                cleaned.append(ln)
+            else:
+                cleaned.append(ln)
+        t = "\n".join(cleaned)
+        # 4) 去掉文件头/尾多余空行
+        t = t.strip() + "\n"
+        return t
+
+    raw_text = _read_text(path)
+    cleaned_text = _clean_text(raw_text)
+
+    cfg = None
+    # 优先：Ultralytics 自带 loader（更兼容 include/锚点等特性）
     try:
         from ultralytics.utils import yaml_load, checks
         cfg = yaml_load(checks.check_yaml(path))
+        # 若返回类型异常或返回空映射，尝试用清洗后的文本再解析一次
+        if not isinstance(cfg, dict) or not cfg:
+            raise ValueError("yaml_load 返回异常，进入清洗文本回退解析")
     except Exception as e:
-        print(f"[WARN] Ultralytics yaml_load 失败，回退到 yaml.safe_load：{e}")
-        # 回退：读取原文再 safe_load
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            txt = f.read()
+        print(f"[WARN] Ultralytics yaml_load 失败或无效，回退到清洗文本解析：{e}")
         try:
-            cfg = yaml.safe_load(txt)
+            cfg = yaml.safe_load(io.StringIO(cleaned_text))
         except Exception as e2:
-            raise ValueError(f"[错误] 无法解析 YAML: {path}，原始异常：{e2}")
+            # 再次回退：尝试从出现 'nc:' 或 'backbone:' 的位置截取后解析
+            m = re.search(r"(?m)^(nc:|backbone:)", cleaned_text)
+            if m:
+                try:
+                    cfg = yaml.safe_load(cleaned_text[m.start():])
+                except Exception as e3:
+                    raise ValueError(f"[错误] 无法解析 YAML: {path}，原始异常：{e3}")
+            else:
+                raise ValueError(f"[错误] 无法解析 YAML: {path}，原始异常：{e2}")
 
     if not isinstance(cfg, dict):
         raise ValueError(f"[错误] {path} 未解析为字典，请检查YAML语法。")
 
-    # ★ 关键修复：若存在顶级 neck，则并入 head，顶级只保留 backbone/head
+    # ★ 自动把顶层 neck 并入 head（Ultralytics 仅识别 backbone/head）
     has_backbone = "backbone" in cfg
     has_head = "head" in cfg
-    has_neck = "neck" in cfg
-
-    if has_neck:
+    if "neck" in cfg:
         neck_block = cfg.get("neck") or []
         head_block = cfg.get("head") or []
         if not isinstance(neck_block, list) or not isinstance(head_block, list):
-            raise ValueError(f"[错误] {path} 中 neck/head 不是列表，请检查YAML。")
-        # 先 neck，再原 head，保持执行顺序一致
-        merged_head = list(neck_block) + list(head_block)
-        cfg["head"] = merged_head
-        # 删除顶级 neck，符合 Ultralytics 仅识别 backbone/head 的习惯
+            top_keys = ", ".join(cfg.keys())
+            raise ValueError(f"[错误] {path} 中 neck/head 不是列表，当前顶级键：[{top_keys}]。")
+        cfg["head"] = list(neck_block) + list(head_block)  # 先 neck 再 head，保持执行顺序
         del cfg["neck"]
-        has_head = True  # 合并后必然有 head
+        has_head = True
 
-    # 最终检查：至少 backbone 与 head 同时存在
+    # 最终检查：必须同时有 backbone 与 head
     if not has_backbone or not has_head:
-        # 这里给出具体提示，方便你检查
         top_keys = ", ".join(cfg.keys())
+        # 打印前若有“脏首行残留”的现象，可从归档中看到：首行是 'yaml'，随后才是结构键位（示例）  # 中文注释
+        # 参考：yolo-main_All4.txt 的 YAML 片段，首行 'yaml' → 其后才是 nc/backbone（会导致解析异常）  # 中文注释
         raise ValueError(
             f"[错误] {path} 缺少 'backbone' 或 'head'。当前顶级键：[{top_keys}]。\n"
-            f"若原本存在 'neck:'，请确认已正确合并到 'head:'。"
+            f"请确认YAML首行没有多余的语言标记（如单独的 'yaml'），必要时删除后再试。"
         )
 
     return cfg
@@ -185,9 +275,9 @@ def main():
     task = infer_task_from_text_or_cfg(args.cfg, cfg_dict)
     print(f"[INFO] 基于 YAML 自动判定任务: {task}")
 
-    # ★ 关键：把 dict 直接传给 YOLO，避免内部再解析路径
+    # ★ 关键：直接传递 YAML 文件路径给 YOLO，让其内部解析
     print("[INFO] 正在初始化YOLO模型...")
-    model = YOLO(cfg_dict, task=task)
+    model = YOLO(args.cfg, task=task)
 
     # 回调
     if args.close_p2_until > 0:

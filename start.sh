@@ -1,60 +1,96 @@
-# /workspace/yolo/start.sh
 #!/bin/bash
-# 作用：统一“模型YAML 与 任务类型”，避免 backbone KeyError；并加载外部 hyp 超参  # 中文注释
-
-# ===== 默认参数（可通过命令行覆盖） =====  # 中文注释
-DATA=${1:-/workspace/yolo/ultralytics/cfg/datasets/VisDrone.yaml}   # 数据集YAML  # 中文注释
-EPOCHS=${2:-600}                                                    # 训练轮数     # 中文注释
-BATCH=${3:-16}                                                      # 批大小       # 中文注释
-SIZE=${4:-640}                                                      # 输入尺寸     # 中文注释
-DEVICE=${5:-0}                                                      # 设备ID       # 中文注释
-CLOSE_P2=${6:-30}                                                   # 前N轮关闭P2  # 中文注释
-HYP=${7:-/workspace/yolo/ultralytics/cfg/new/hyp_500.yaml}          # 超参文件     # 中文注释
-
-# ===== 选择“带分割头”的全量模型YAML（含 DetectStable + Segment）=====  # 中文注释
-MODEL=/workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-all.yaml  # 中文注释
+# /workspace/yolo/start.sh
+# 作用：YOLO-SOD-Fusion增强版训练启动脚本（最小修复版：暂时移除 --hyp，确保可跑）
 
 echo "=============================================="
-echo "  YOLO-SOD-Fusion 训练"
-echo "  data:  $DATA"
-echo "  model: $MODEL"
-echo "  epochs:$EPOCHS  batch:$BATCH  imgsz:$SIZE  device:$DEVICE"
-echo "  close P2 until: $CLOSE_P2   hyp: $HYP"
+echo "  YOLO-SOD-Fusion 增强版训练系统"
+echo "=============================================="
+echo "集成模块："
+echo "  ★ MambaBlock / SwinBlock / DETR-Aux / BoundaryAwareLoss / DetectStable"
 echo "=============================================="
 
-# 依赖自检（torch/ultralytics）
-python - << 'PY' 2>/dev/null
-import torch, ultralytics
-print("PyTorch:", torch.__version__, "Ultralytics:", ultralytics.__version__)
-PY
-if [ $? -ne 0 ]; then
-  echo "[ERR] 缺少依赖，请先: pip install -r /workspace/yolo/requirements.txt"
+# 【重要】如需恢复自定义超参文件：
+#   1) 确认文件真实存在（例如：/workspace/yolo/ultralytics/cfg/new/hyp_hcp_400.yaml）
+#   2) 在后面的 python 命令末尾追加：--hyp /workspace/yolo/ultralytics/cfg/new/hyp_hcp_400.yaml
+#   3) train.py 会把它作为 cfg 覆盖（Ultralytics 机制）
+
+# 默认训练配置参数（注意大小写保持和实际文件一致）
+DEFAULT_DATA="/workspace/yolo/ultralytics/cfg/datasets/visdrone.yaml"
+DEFAULT_EPOCHS=500
+DEFAULT_IMGSZ=640
+DEFAULT_BATCH=16
+DEFAULT_DEVICE=0
+DEFAULT_CLOSE_P2_UNTIL=30
+
+# 读入命令行参数或使用默认
+DATA_PATH=${1:-$DEFAULT_DATA}
+EPOCHS=${2:-$DEFAULT_EPOCHS}
+BATCH_SIZE=${3:-$DEFAULT_BATCH}
+IMG_SIZE=${4:-$DEFAULT_IMGSZ}
+DEVICE=${5:-$DEFAULT_DEVICE}
+CLOSE_P2_UNTIL=${6:-$DEFAULT_CLOSE_P2_UNTIL}
+
+echo "训练配置参数："
+echo "  数据集配置: $DATA_PATH"
+echo "  训练轮数: $EPOCHS"
+echo "  批次大小: $BATCH_SIZE"
+echo "  图像尺寸: $IMG_SIZE"
+echo "  训练设备: $DEVICE"
+echo "  P2关闭轮数: $CLOSE_P2_UNTIL"
+echo "=============================================="
+
+# 检查数据集配置是否存在
+if [ ! -f "$DATA_PATH" ]; then
+  echo "错误：数据集配置文件未找到: $DATA_PATH"
+  echo "请修正 DEFAULT_DATA 或传入正确路径"
   exit 1
 fi
 
-# 启动训练（保留你常用的项目命名等）
+# 检查Python与依赖
+if ! command -v python &> /dev/null; then
+  echo "错误：未找到Python解释器"
+  exit 1
+fi
+
+echo "检查依赖库..."
+python -c "import torch, ultralytics" 2>/dev/null || {
+  echo "错误：缺少必要的Python库（torch, ultralytics），请先：pip install -r requirements.txt"
+  exit 1
+}
+
+echo "依赖检查通过，开始训练..."
+echo "=============================================="
+
+# 启动训练（去掉 --hyp，先确保训练跑通）
 python /workspace/yolo/train.py \
-  --cfg "$MODEL" \
-  --data "$DATA" \
+  --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-stable.yaml \
+  --data "$DATA_PATH" \
   --epochs $EPOCHS \
-  --imgsz $SIZE \
-  --batch $BATCH \
+  --imgsz $IMG_SIZE \
+  --batch $BATCH_SIZE \
   --device $DEVICE \
-  --hyp "$HYP" \
-  --close_p2_until $CLOSE_P2 \
+  --workers 8 \
+  --close_p2_until $CLOSE_P2_UNTIL \
   --use_boundary_loss \
   --use_detr_aux \
+  --edge_weight 1.0 \
+  --bce_weight 1.0 \
+  --iou_weight 0.0 \
+  --boundary_loss_weight 0.2 \
+  --lr0 0.01 \
+  --lrf 0.01 \
+  --optimizer auto \
   --project runs_fusion \
   --name yolo_sod_fusion_exp
 
 # 结果检查
 if [ $? -eq 0 ]; then
   echo "=============================================="
-  echo "训练完成，权重/日志在 runs_fusion/yolo_sod_fusion_exp/"
+  echo "训练完成！结果保存在: runs_fusion/yolo_sod_fusion_exp/"
   echo "=============================================="
 else
   echo "=============================================="
-  echo "训练失败，请查看日志"
+  echo "训练过程中发生错误，请检查日志"
   echo "=============================================="
   exit 1
 fi
