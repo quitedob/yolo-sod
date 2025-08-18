@@ -67,6 +67,7 @@ echo "依赖检查通过，开始训练..."
 echo "=============================================="
 
 # 执行训练脚本，启用所有增强功能
+# /workspace/yolo/start.sh  【仅修改训练命令一处，添加 --hyp 参数】  # 中文注释
 python /workspace/yolo/train.py \
     --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-all.yaml \
     --data "$DATA_PATH" \
@@ -86,7 +87,8 @@ python /workspace/yolo/train.py \
     --lrf 0.01 \
     --optimizer auto \
     --project runs_fusion \
-    --name yolo_sod_fusion_exp
+    --name yolo_sod_fusion_exp \
+    --hyp /workspace/yolo/ultralytics/cfg/new/hyp_500.yaml   # ★ 新增：加载 500 epoch 超参
 
 # 检查训练结果
 if [ $? -eq 0 ]; then

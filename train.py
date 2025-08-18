@@ -209,7 +209,7 @@ def main():
     
     # 创建YOLO模型
     print('[INFO] 正在初始化YOLO模型...')
-    model = YOLO(args.cfg)
+    model = YOLO(args.cfg, task='segment')  
     
     # 注册训练回调
     print('[INFO] 正在注册训练回调...')
