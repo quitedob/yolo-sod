@@ -1,0 +1,137 @@
+# /workspace/yolo/ultralytics/cfg/models/new/hyp_hcp_400_v2.yaml
+# 主要功能简介: HCP-400分层收敛协议超参数配置 - 支持Mamba/VMamba、BiFormer、RT-DETR辅助头
+# 基于2025年最新研究：四阶段训练、差分学习率、P2延迟开启、InterpIoU损失
+
+# ========= 四阶段超参数配置 =========
+stage1:  # 1-50，冻结骨干，训练新模块
+  optimizer: AdamW
+  lr0: 0.002
+  lrf: 0.10
+  momentum: 0.9
+  weight_decay: 0.01
+  warmup_epochs: 10
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  box: 7.5
+  cls: 0.5
+  dfl: 1.5
+  mosaic: 1.0
+  mixup: 0.10
+  copy_paste: 0.0
+  label_smoothing: 0.10
+
+stage2:  # 51-150，解冻+差分LR+适度增强
+  optimizer: AdamW
+  lr0: 0.001
+  lrf: 0.05
+  momentum: 0.9
+  weight_decay: 0.005
+  warmup_epochs: 5
+  mosaic: 1.0
+  mixup: 0.15
+  copy_paste: 0.0
+
+stage3:  # 151-350，全局微调
+  optimizer: AdamW
+  lr0: 0.0006
+  lrf: 0.02
+  momentum: 0.9
+  weight_decay: 0.0005
+  warmup_epochs: 0
+  mosaic: 0.8
+  mixup: 0.10
+  copy_paste: 0.0
+
+stage4:  # 351-400，收官精炼（更低增强/近无噪声）
+  optimizer: AdamW
+  lr0: 0.0003
+  lrf: 0.01
+  momentum: 0.9
+  weight_decay: 0.0005
+  warmup_epochs: 0
+  mosaic: 0.0
+  mixup: 0.0
+  copy_paste: 0.0
+
+# ========= 公共段（匹配/增强等） =========
+iou_t: 0.20
+iou_mode: interpiou
+interpiou_samples: 8
+
+# 数据增强参数
+hsv_h: 0.015
+hsv_s: 0.70
+hsv_v: 0.40
+
+degrees: 0.0
+translate: 0.10
+scale: 0.50
+shear: 0.0
+perspective: 0.0
+flipud: 0.0
+fliplr: 0.5
+
+# 小目标增强参数
+small_object_scale: 0.3  # 小目标复制粘贴缩放范围
+small_object_iou_thresh: 0.3  # 小目标IoU阈值
+small_object_prob: 0.1  # 小目标增强概率
+
+# RT-DETR辅助头参数
+aux_weight: 0.3  # 辅助头损失权重
+aux_lr_multiplier: 1.2  # 辅助头学习率倍数
+
+# Mamba/VMamba模块参数
+mamba_lr_multiplier: 1.5  # Mamba模块学习率倍数
+mamba_weight_decay: 0.01  # Mamba模块权重衰减
+
+# BiFormer注意力参数
+biformer_lr_multiplier: 1.2  # BiFormer学习率倍数
+biformer_dropout: 0.1  # BiFormer dropout率
+
+# P2小目标检测参数
+p2_delay_epochs: 30  # P2分支延迟开启轮数
+p2_lr_multiplier: 1.1  # P2分支学习率倍数
+
+# 训练稳定性参数
+grad_clip_norm: 10.0  # 梯度裁剪范数
+ema_decay: 0.9999  # EMA衰减率
+patience: 50  # 早停耐心值
+
+# 损失函数权重
+box: 7.5  # 边界框损失权重
+cls: 0.5  # 分类损失权重
+dfl: 1.5  # DFL损失权重
+pose: 12.0  # 姿态损失权重（如果使用）
+kobj: 1.0  # 关键点损失权重（如果使用）
+label_smoothing: 0.1  # 标签平滑
+
+# 优化器参数
+optimizer: AdamW  # 优化器类型
+momentum: 0.9  # 动量
+weight_decay: 0.01  # 权重衰减
+nesterov: false  # 是否使用Nesterov动量
+
+# 学习率调度
+lr0: 0.001  # 初始学习率
+lrf: 0.1  # 最终学习率因子
+warmup_epochs: 10  # 预热轮数
+warmup_momentum: 0.8  # 预热动量
+warmup_bias_lr: 0.1  # 预热偏置学习率
+
+# 数据加载参数
+workers: 8  # 数据加载器工作进程数
+cache: false  # 是否缓存数据
+rect: false  # 是否使用矩形训练
+resume: false  # 是否恢复训练
+
+# 验证参数
+val: true  # 是否进行验证
+save_period: -1  # 保存周期（-1表示每个epoch都保存）
+save_json: false  # 是否保存JSON格式结果
+save_hybrid: false  # 是否保存混合格式
+conf: 0.001  # 置信度阈值
+iou: 0.6  # NMS IoU阈值
+max_det: 300  # 最大检测数量
+half: true  # 是否使用半精度
+dnn: false  # 是否使用DNN后端
+plots: true  # 是否生成图表

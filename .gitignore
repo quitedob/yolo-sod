@@ -10,8 +10,6 @@ trial*/
 *.bin
 __pycache__
 data
-data_utils/face_tracking/3DMM/*
-data_utils/face_parsing/79999_iter.pth
 *.txt
 *.jpg
 *.jpeg
@@ -20,16 +18,11 @@ logs
 runs
 *.mp4
 .DS_Store
-workspace/log_ngp.txt
 .idea
-models/
 *.log
 dist
 .ipynb_checkpoints
 *.pth
-runs_stable_diffusion/
-runs/
 *.pt
-runs_advanced
 assets
 tests

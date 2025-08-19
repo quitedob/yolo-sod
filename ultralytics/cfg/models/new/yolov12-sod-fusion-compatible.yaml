@@ -1,0 +1,58 @@
+# 兼容纯 Ultralytics 模块的四尺度版本（修正 nn.Upsample 的 None）  # 中文注释
+# 注意：使用纯 Detect 时，训练脚本请设置 --close_p2_until 0 以避免无效的 P2 开关回调  # 中文注释
+
+nc: 10
+depth_multiple: 0.33
+width_multiple: 0.50
+ch: 3
+
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]          # P1/2  # 中文注释
+  - [-1, 1, Conv, [128, 3, 2]]         # P2/4  # 中文注释
+  - [-1, 3, C2f, [128, True]]
+  - [-1, 1, Conv, [256, 3, 2]]         # P3/8  # 中文注释
+  - [-1, 6, C2f, [256, True]]
+  - [-1, 1, Conv, [512, 3, 2]]         # P4/16 # 中文注释
+  - [-1, 3, C2f, [512, True]]
+  - [-1, 1, C2f, [512, True]]          # 兼容：用 C2f 代替 MFBlock  # 中文注释
+  - [-1, 1, Conv, [1024, 3, 2]]        # P5/32 # 中文注释
+  - [-1, 2, C2f, [1024, True]]
+  - [-1, 1, C2f, [1024, True]]         # 兼容：用 C2f 代替 MFBlock  # 中文注释
+  - [-1, 1, SPPF, [1024, 5]]
+
+neck:
+  # 自顶向下 P5->P4->P3  # 中文注释
+  - [-1, 1, Conv, [256, 1, 1]]
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]      # ← 修正为 None（不加引号）  # 中文注释
+  - [[-1, 7], 1, Concat, [1]]
+  - [-1, 3, C2f, [512, True]]
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 4], 1, Concat, [1]]
+  - [-1, 3, C2f, [256, True]]
+
+  # P2 分支（U-Net 风格）  # 中文注释
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 2], 1, Concat, [1]]
+  - [-1, 3, C2f, [128, True]]
+  - [-1, 1, C2f, [128, True]]   # 兼容：用 C2f 代替 RAFB  # 中文注释
+
+  # 回流 P2->P3->P4->P5  # 中文注释
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 18], 1, Concat, [1]]
+  - [-1, 3, C2f, [256, True]]
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 15], 1, Concat, [1]]
+  - [-1, 3, C2f, [512, True]]
+  - [-1, 1, Conv, [1024, 3, 2]]
+  - [[-1, 11], 1, Concat, [1]]
+  - [-1, 3, C2f, [1024, True]]
+
+head:
+  - [[22, 25, 28, 31], 1, Detect, [nc]]  # 兼容：用 Detect（四尺度）  # 中文注释
+
+loss:
+  box: 7.5
+  cls: 0.5
+  dfl: 1.5
+  iou_mode: interpiou
+  interpiou_samples: 8

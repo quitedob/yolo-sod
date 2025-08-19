@@ -221,6 +221,7 @@ def create_boundary_loss_callback(edge_weight=1.0, bce_weight=1.0, iou_weight=0.
     return _cb
 
 # ========== 主入口 ==========
+# ========== 主入口 ==========
 def main():
     """训练入口：解析参数→注册模块→加载配置→构建YOLO→注册回调→汇总超参→启动训练"""
     # --- 解析命令行参数 ---
@@ -241,6 +242,10 @@ def main():
     p.add_argument('--warmup_epochs', type=int, default=3, help='预热训练轮数')
     p.add_argument('--use_boundary_loss', action='store_true', help='(分割任务) 启用边界感知损失')
     p.add_argument('--close_p2_until', type=int, default=30, help='(可选) 在指定轮数前关闭P2层')
+    
+    # [新增修复] 添加对 --use_detr_aux 参数的识别
+    p.add_argument('--use_detr_aux', action='store_true', help='(可选) 启用DETR辅助头，此参数仅用于命令兼容性')
+
     p.add_argument('--edge_weight', type=float, default=1.0, help='(边界损失) 边缘权重')
     p.add_argument('--bce_weight', type=float, default=1.0, help='(边界损失) BCE权重')
     p.add_argument('--iou_weight', type=float, default=0.0, help='(边界损失) IoU权重')
@@ -268,7 +273,7 @@ def main():
         model.add_callback('on_train_epoch_start', create_p2_toggle_callback(args.close_p2_until))
         print(f"[INFO] 已启用 P2 启停（前 {args.close_p2_until} 轮关闭P2）")
 
-    # 4.2) 【新增】回调：早期稳训，若早期损失异常，自动下调LR与cls权重
+    # 4.2) 回调：早期稳训，若早期损失异常，自动下调LR与cls权重
     try:
         from callbacks.early_phase_tweaks import on_train_epoch_end as _early_tweak
         model.add_callback('on_train_epoch_end', _early_tweak)
