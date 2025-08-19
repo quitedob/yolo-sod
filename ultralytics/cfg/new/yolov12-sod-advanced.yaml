@@ -1,0 +1,69 @@
+# /workspace/yolo/ultralytics/cfg/new/yolov12-sod-advanced.yaml
+# 中文说明：
+# 1) 面向“微小目标”的 YOLOv12 增强架构（在 SOD-Fusion 基线之上）。
+# 2) 关键改动：显式 P2 头 + 动态融合(基于 HyperACE) + 颈部插入 BiFormer 稀疏注意 +
+#    深层替换为 DCNv3 + DETR-Aux 支持“密度/热力图先验”。
+# 3) 训练基石在超参/Trainer 中生效（NWD + RFLA），本 YAML 暴露对应开关，便于脚本读取。
+
+# ============ 基本参数 ============
+nc: 10              # 类别数 (将被 data.yaml 覆写)
+depth_multiple: 1.0
+width_multiple: 1.0
+act: silu
+
+# ============ 模块开关（供训练脚本读取） ============
+switches:
+  use_p2: true
+  use_biformer: true
+  use_dcn: "dcnv3"
+  use_density_prior: true
+  loss_metric: "nwd_mix"
+  assigner: "rfla"
+  sahi_infer: true
+
+# ============ Backbone ============
+backbone:
+  # from, repeats, module, args
+  - [-1, 1, Conv, [64, 3, 2]]      # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]]     # 1-P2/4
+  - [-1, 3, C2f, [128, True]]      # 2 (P2 out)
+  - [-1, 1, Conv, [256, 3, 2]]     # 3-P3/8
+  - [-1, 6, C2f, [256, True]]      # 4 (P3 out)
+  - [-1, 1, Conv, [512, 3, 2]]     # 5-P4/16
+  - [-1, 6, C2f_DCNv3, [512, True]]# 6 (P4 out)
+  - [-1, 1, Conv, [1024, 3, 2]]    # 7-P5/32
+  - [-1, 3, C2f_DCNv3, [1024, True]]# 8 (P5 out)
+
+# ============ Neck（PANet结构） ============
+neck:
+  # 上采样路径 (Top-down)
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 9, upsample P5
+  - [[-1, 6], 1, Concat, [1]]                  # 10, concat(up(P5), P4) -> P4_t
+  - [-1, 3, C2f, [512]]                        # 11, P4_out
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 12, upsample P4_out
+  - [[-1, 4], 1, Concat, [1]]                  # 13, concat(up(P4_out), P3) -> P3_t
+  - [-1, 3, C2f, [256]]                        # 14, P3_out
+  - [-1, 1, BiFormerBlock, [256]]              # 15, BiFormer on P3 path
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']] # 16, upsample P3_out
+  - [[-1, 2], 1, Concat, [1]]                  # 17, concat(up(P3_out), P2) -> P2_t
+  - [-1, 1, HyperACEBlockStable, [128]]        # 18, P2_out (dynamic fusion)
+  - [-1, 1, BiFormerBlock, [128]]              # 19, BiFormer on P2 path
+
+  # 下采样路径 (Bottom-up)
+  - [[18], 1, Conv, [128, 3, 2]]               # 20, downsample P2_out
+  - [[-1, 15], 1, Concat, [1]]                 # 21, concat(down(P2_out), P3_out) -> P3_b
+  - [-1, 3, C2f, [256]]                        # 22, P3_out_2
+
+  - [-1, 1, Conv, [256, 3, 2]]                 # 23, downsample P3_out_2
+  - [[-1, 11], 1, Concat, [1]]                 # 24, concat(down(P3_out_2), P4_out) -> P4_b
+  - [-1, 3, C2f, [512]]                        # 25, P4_out_2
+
+  - [-1, 1, Conv, [512, 3, 2]]                 # 26, downsample P4_out_2
+  - [[-1, 8], 1, Concat, [1]]                  # 27, concat(down(P4_out_2), P5) -> P5_b
+  - [-1, 3, C2f, [1024]]                       # 28, P5_out_2
+
+# ============ Head（检测头） ============
+head:
+  - [[19, 22, 25, 28], 1, DetectStable, [nc]]  # DetectStable on [P2, P3, P4, P5]
