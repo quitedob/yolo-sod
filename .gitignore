@@ -6,7 +6,6 @@ build/
 *.png
 tmp*
 trial*/
-*.txt
 *.bin
 __pycache__
 data
