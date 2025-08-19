@@ -10,7 +10,6 @@ trial*/
 *.bin
 __pycache__
 data
-*.txt
 *.jpg
 *.jpeg
 pretrained
