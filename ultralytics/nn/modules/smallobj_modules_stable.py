@@ -80,29 +80,26 @@ except Exception:
 
 
 # =========================================================
-# 1) 稳定版 HyperACEBlock：投影+归一化 -> 3x3 融合 -> 稳定注意 -> 可学习残差
+# 1) 稳定版 HyperACEBlock：适配YAML v2，c1,c2,c_out 从 args 传入
 # =========================================================
 class HyperACEBlockStable(nn.Module):
     """高阶注意力与上下文增强（稳定版）：投影+ChannelNorm→卷积融合→稳定注意力→ScaleAdd残差"""
 
-    def __init__(self, c1, c2, ch_out=None, k=1, s=1, g=1, act=True, **kwargs):
+    def __init__(self, c_in_high, c_in_low, c_out, **kwargs):
         super().__init__()
-        ch_out = c1 if ch_out is None else ch_out
-        self.ph = Conv(c1, ch_out, 1)    # 高层 1x1 投影
-        self.pl = Conv(c2, ch_out, 1)    # 低层 1x1 投影
+        self.ph = Conv(c_in_high, c_out, 1)    # 高层 1x1 投影
+        self.pl = Conv(c_in_low,  c_out, 1)    # 低层 1x1 投影
         self.norm_h = ChannelNorm()           # 高层通道归一化
         self.norm_l = ChannelNorm()           # 低层通道归一化
-        self.fuse_conv = Conv(ch_out, ch_out, 3)       # 3x3 融合卷积
-        self.attn = FusionLockTSS_Stable(ch_out)       # 稳定自注意力
-        self.scale_add = ScaleAdd(init_alpha=0.2)      # 可学习残差，初值较小更稳
+        self.fuse_conv = Conv(c_out, c_out, 3) # 3x3 融合卷积
+        self.attn = FusionLockTSS_Stable(c_out) # 稳定自注意力
+        self.scale_add = ScaleAdd(init_alpha=0.2) # 可学习残差
 
-    def forward(self, x: torch.Tensor | list | tuple) -> torch.Tensor:
+    def forward(self, x: list | tuple) -> torch.Tensor:
         # 兼容 from: [a,b] 列表输入
-        if isinstance(x, (list, tuple)):
-            assert len(x) == 2, "HyperACEBlockStable 期望两个输入特征 (x_high, x_low)"
-            x_high, x_low = x[0], x[1]
-        else:
-             raise ValueError("HyperACEBlockStable requires a list or tuple of two input tensors.")
+        assert isinstance(x, (list, tuple)) and len(x) == 2, \
+            "HyperACEBlockStable 期望一个包含两个输入特征 (x_high, x_low) 的列表或元组"
+        x_high, x_low = x[0], x[1]
 
         # 尺寸对齐
         if x_high.shape[-2:] != x_low.shape[-2:]:
@@ -164,5 +161,131 @@ class DetectStable(DetectBase if DetectBase is not None else nn.Module):
         # 推理路径：交给 Detect 基类的解码逻辑（拼接 + DFL/解码等）
         y = self._inference(outs)
         return y if self.export else (y, outs)
+
+
+# =========================================================
+# 3) LayerNorm2d for BiFormerLiteBlock
+# =========================================================
+class LayerNorm2d(nn.Module):
+    """(B, C, H, W) channel-wise layer normalization."""
+    def __init__(self, num_channels: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(num_channels))
+        self.bias = nn.Parameter(torch.zeros(num_channels))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        u = x.mean(1, keepdim=True)
+        s = (x - u).pow(2).mean(1, keepdim=True)
+        x = (x - u) / torch.sqrt(s + self.eps)
+        return self.weight[:, None, None] * x + self.bias[:, None, None]
+
+
+# =========================================================
+# 4) BiFormer-Lite (Window Attention + Global Routing Tokens)
+# =========================================================
+class BiFormerLiteBlock(nn.Module):
+    """BiFormer-Lite Block."""
+    def __init__(self, c, **kwargs):
+        super().__init__()
+        # Placeholder for arguments from YAML, like win, topk, num_heads
+        win = kwargs.get('win', 8)
+        topk = kwargs.get('topk', 64)
+        num_heads = kwargs.get('num_heads', 4)
+        attn_drop = kwargs.get('attn_drop', 0.0)
+        proj_drop = kwargs.get('proj_drop', 0.0)
+
+        assert c % num_heads == 0, "c must be divisible by num_heads"
+        self.c = c
+        self.win = win
+        self.topk = topk
+        self.num_heads = num_heads
+
+        self.norm1 = LayerNorm2d(c)
+        self.qkv_local = nn.Conv2d(c, c * 3, 1, 1)
+        self.attn_local = nn.MultiheadAttention(embed_dim=c, num_heads=num_heads, batch_first=True, dropout=attn_drop)
+        self.proj_local = nn.Conv2d(c, c, 1, 1)
+        self.drop_local = nn.Dropout(proj_drop)
+
+        self.norm2 = LayerNorm2d(c)
+        self.q_proj_g = nn.Conv2d(c, c, 1, 1)
+        self.kv_proj_g = nn.Conv2d(c, c * 2, 1, 1)
+        self.attn_global = nn.MultiheadAttention(embed_dim=c, num_heads=num_heads, batch_first=True, dropout=attn_drop)
+        self.proj_global = nn.Conv2d(c, c, 1, 1)
+        self.drop_global = nn.Dropout(proj_drop)
+
+        self.norm3 = LayerNorm2d(c)
+        self.ffn = nn.Sequential(
+            nn.Conv2d(c, c * 2, 1, 1),
+            nn.GELU(),
+            nn.Conv2d(c * 2, c, 1, 1),
+        )
+
+    @staticmethod
+    def _window_partition(x: torch.Tensor, win: int):
+        B, C, H, W = x.shape
+        pad_h = (win - H % win) % win
+        pad_w = (win - W % win) % win
+        if pad_h or pad_w:
+            x = F.pad(x, (0, pad_w, 0, pad_h))
+        Hn, Wn = x.shape[2], x.shape[3]
+        x = x.view(B, C, Hn // win, win, Wn // win, win).permute(0, 2, 4, 1, 3, 5).contiguous()
+        x = x.view(-1, C, win, win)
+        return x, (Hn, Wn)
+
+    @staticmethod
+    def _window_merge(x_win: torch.Tensor, B: int, grid_hw: tuple[int, int], win: int):
+        Hn, Wn = grid_hw
+        C = x_win.shape[1]
+        x = x_win.view(B, Hn // win, Wn // win, C, win, win).permute(0, 3, 1, 4, 2, 5).contiguous()
+        x = x.view(B, C, Hn, Wn)
+        return x
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, C, H, W = x.shape
+
+        x1 = self.norm1(x)
+        qkv = self.qkv_local(x1)
+        q, k, v = qkv.chunk(3, dim=1)
+
+        q_win, grid_hw = self._window_partition(q, self.win)
+        k_win, _ = self._window_partition(k, self.win)
+        v_win, _ = self._window_partition(v, self.win)
+        
+        q_flat = q_win.flatten(2).transpose(1, 2)
+        k_flat = k_win.flatten(2).transpose(1, 2)
+        v_flat = v_win.flatten(2).transpose(1, 2)
+
+        out_local, _ = self.attn_local(q_flat, k_flat, v_flat)
+        out_local = out_local.transpose(1, 2).view_as(q_win)
+
+        out_local = self._window_merge(out_local, B, grid_hw, self.win)
+        if grid_hw[0] != H or grid_hw[1] != W:
+            out_local = out_local[:, :, :H, :W]
+
+        x = x + self.drop_local(self.proj_local(out_local))
+
+        x2 = self.norm2(x)
+        score = self.q_proj_g(x2)
+        score_map = score.pow(2).sum(1)
+        k_g, v_g = self.kv_proj_g(x2).chunk(2, dim=1)
+
+        topk = min(self.topk, H * W)
+        _, idx = torch.topk(score_map.view(B, -1), k=topk, dim=1)
+        
+        k_g_flat = k_g.view(B, C, -1).transpose(1, 2)
+        v_g_flat = v_g.view(B, C, -1).transpose(1, 2)
+
+        idx_exp = idx.unsqueeze(-1).expand(-1, -1, C)
+        K_global = torch.gather(k_g_flat, 1, idx_exp)
+        V_global = torch.gather(v_g_flat, 1, idx_exp)
+
+        q_glb = self.q_proj_g(x2).view(B, C, -1).transpose(1, 2)
+        out_global, _ = self.attn_global(q_glb, K_global, V_global)
+        out_global = out_global.transpose(1, 2).view(B, C, H, W)
+        x = x + self.drop_global(self.proj_global(out_global))
+
+        x = x + self.ffn(self.norm3(x))
+        return x
 
 

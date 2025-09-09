@@ -87,6 +87,7 @@ from .head import OBB, Classify, Detect, Pose, RTDETRDecoder, Segment, WorldDete
 from .smallobj_modules import (
     Add,
     SE,
+    SE_Block,
     MixedAttention,
     SpaceToDepth,
     OmniKernelFusion,
@@ -105,6 +106,9 @@ from .braf_block import BiLevelRoutingAttentionFusionBlock  # 导入BRAF模块  
 from .blocks_mamba import MambaBlock  # 导入Mamba状态空间模块  # 中文注释
 from .blocks_transformer import SwinBlock  # 导入Swin Transformer模块  # 中文注释
 from .heads_detr_aux import DETRAuxHead  # 导入DETR辅助头  # 中文注释
+from .ca_block import CA_Block  # 导入坐标注意力模块  # 中文注释
+from .a2_attn import A2_Attn  # 导入区域注意力模块  # 中文注释
+from .cbam_block import CBAM_Block  # 导入CBAM注意力模块  # 中文注释
 from .transformer import (
     AIFI,
     MLP,
@@ -205,6 +209,7 @@ __all__ = (
     # small object enhancement modules
     "Add",
     "SE",
+    "SE_Block",
     "MixedAttention",
     "SpaceToDepth",
     "OmniKernelFusion",
@@ -225,4 +230,8 @@ __all__ = (
     "MambaBlock",
     "SwinBlock",
     "DETRAuxHead",
+    # attention modules
+    "CA_Block",
+    "A2_Attn", 
+    "CBAM_Block",
 )

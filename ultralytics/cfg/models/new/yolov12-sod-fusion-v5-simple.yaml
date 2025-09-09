@@ -1,0 +1,57 @@
+# YOLOv12-SOD-Fusion-v5 Model Configuration (Simple Version without MambaBlock)
+# Enhanced with attention mechanisms: SE_Block, CBAM_Block, CA_Block, A2_Attn, SwinBlock
+# Designed for VisDrone dataset with 10 classes
+
+nc: 10  # number of classes (VisDrone has 10 classes)
+depth_multiple: 0.33
+width_multiple: 0.50
+ch: 3  # input channels
+
+backbone:
+  # Stage 1
+  - [ -1, 1, Conv,        [64, 3, 2] ]         # 0: stride 2 conv -> P1/2
+  - [ -1, 1, SE_Block,    [64] ]               # 1: **Added SE attention after first conv**
+  - [ -1, 1, Conv,        [128, 3, 2] ]        # 2: -> P2/4
+  - [ -1, 3, C2f,         [128, True] ]        # 3: CSP block with 3 bottlenecks
+  - [ -1, 1, CBAM_Block,  [128, 16] ]          # 4: **Added CBAM (reduction=16) after P2 stage** 
+  - [ -1, 1, Conv,        [256, 3, 2] ]        # 5: -> P3/8
+  - [ -1, 6, C2f,         [256, True] ]        # 6: CSP block
+  - [ -1, 1, Conv,        [512, 3, 2] ]        # 7: -> P4/16 (replaced MambaBlock with Conv)
+  - [ -1, 3, C2f,         [512, True] ]        # 8: CSP block
+  - [ -1, 1, SwinBlock,   [4, 7] ]             # 9: Swin Transformer block (4 heads, window 7) at P4
+  - [ -1, 1, Conv,        [1024, 3, 2] ]       # 10: -> P5/32
+  - [ -1, 2, C2f,         [1024, True] ]       # 11: CSP block
+  - [ -1, 1, A2_Attn,     [8, 8] ]             # 12: **Added Area Attention (A2) block at P5** (8 areas, 8 heads)
+  - [ -1, 1, SPPF,        [1024, 5] ]          # 13: SPPF remains for broader receptive field
+
+neck:
+  # Top-Down path (PANet)
+  - [ -1, 1, Conv,       [512, 1, 1] ]         # 14: reduce channel 
+  - [ -1, 1, nn.Upsample,[None, 2, 'nearest'] ] # 15: upsample
+  - [ [ -1, 9 ], 1, Concat, [1] ]              # 16: concat P5 upsampled with P4 (layer 9 from backbone)
+  - [ -1, 3, C2f,        [512, True] ]         # 17: fusion at P4 
+  - [ -1, 1, CBAM_Block, [512, 16] ]           # 18: **Added CBAM after P5-P4 fusion**
+  - [ -1, 1, Conv,       [256, 1, 1] ]         # 19: reduce channel
+  - [ -1, 1, nn.Upsample,[None, 2, 'nearest'] ] # 20: upsample
+  - [ [ -1, 6 ], 1, Concat, [1] ]              # 21: concat with P3 from backbone (layer 6)
+  - [ -1, 3, C2f,        [256, True] ]         # 22: fusion at P3
+  - [ -1, 1, SE_Block,   [256] ]               # 23: **Added SE after P4-P3 fusion (cheap channel attn)**
+  - [ -1, 1, Conv,       [128, 1, 1] ]         # 24: reduce channel
+  - [ -1, 1, nn.Upsample,[None, 2, 'nearest'] ] # 25: upsample
+  - [ [ -1, 3 ], 1, Concat, [1] ]              # 26: concat with P2 from backbone (layer 3)
+  - [ -1, 3, C2f,        [128, True] ]         # 27: fusion at P2 (fine features)
+  - [ -1, 1, SwinBlock,  [2, 7] ]              # 28: **Added a small Swin Transformer at P2 fusion** (2 heads)
+  # Bottom-Up path
+  - [ -1, 1, Conv,       [256, 3, 2] ]         # 29: downsample P2->P3
+  - [ [ -1, 23 ], 1, Concat, [1] ]             # 30: concat with P3 from earlier (layer 23)
+  - [ -1, 3, C2f,        [256, True] ]         # 31: fusion
+  - [ -1, 1, CA_Block,   [256] ]               # 32: **Added Coordinate Attention in P3 up-path**
+  - [ -1, 1, Conv,       [512, 3, 2] ]         # 33: downsample P3->P4
+  - [ [ -1, 18 ], 1, Concat, [1] ]             # 34: concat with P4 from earlier (layer 18)
+  - [ -1, 3, C2f,        [512, True] ]         # 35: fusion
+  - [ -1, 1, Conv,       [1024, 3, 2] ]        # 36: downsample P4->P5
+  - [ [ -1, 13 ], 1, Concat, [1] ]             # 37: concat with P5 from earlier (layer 13 after SPPF)
+  - [ -1, 2, C2f,        [1024, True] ]        # 38: fusion
+  
+head:
+  - [ [28, 32, 35, 38], 1, Detect, [nc] ]     # Detect at P2, P3, P4, P5

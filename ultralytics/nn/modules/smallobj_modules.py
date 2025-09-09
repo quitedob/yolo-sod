@@ -259,9 +259,13 @@ class DecoupledHeadLite(nn.Module):
         return cls, obj, ctr, iou, box  # 返回五头输出
 
 
+# Create alias for SE_Block to match YAML configuration
+SE_Block = SE
+
 __all__ = [
     "Add",  # 导出Add用于YAML解析
     "SE",  # 导出SE注意力模块
+    "SE_Block",  # 导出SE_Block别名
     "MixedAttention",  # 导出混合注意力模块
     "SpaceToDepth",  # 导出空间转深度模块
     "OmniKernelFusion",  # 导出三分支融合模块

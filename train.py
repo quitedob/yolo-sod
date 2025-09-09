@@ -53,7 +53,34 @@ def register_custom_modules():
         U.DetectStable = DetectStable
     except Exception as e:
         print(f"[WARN] DetectStable 导入失败：{e}")
-    print("[INFO] 成功注册自定义模块: MambaBlock, SwinBlock, DETRAuxHead, DetectStable 等")
+    
+    # ★ 注册新的注意力模块
+    try:
+        from ultralytics.nn.modules.ca_block import CA_Block
+        U.CA_Block = CA_Block
+    except Exception as e:
+        print(f"[WARN] CA_Block 导入失败：{e}")
+    
+    try:
+        from ultralytics.nn.modules.a2_attn import A2_Attn
+        U.A2_Attn = A2_Attn
+    except Exception as e:
+        print(f"[WARN] A2_Attn 导入失败：{e}")
+    
+    try:
+        from ultralytics.nn.modules.cbam_block import CBAM_Block
+        U.CBAM_Block = CBAM_Block
+    except Exception as e:
+        print(f"[WARN] CBAM_Block 导入失败：{e}")
+    
+    # ★ 注册 SE_Block 别名
+    try:
+        from ultralytics.nn.modules.smallobj_modules import SE_Block
+        U.SE_Block = SE_Block
+    except Exception as e:
+        print(f"[WARN] SE_Block 导入失败：{e}")
+    
+    print("[INFO] 成功注册自定义模块: MambaBlock, SwinBlock, DETRAuxHead, DetectStable, CA_Block, A2_Attn, CBAM_Block, SE_Block 等")
 
 # ========== YAML 读取/判定 ==========
 def infer_task_from_text_or_cfg(cfg_path: str, cfg_dict: dict) -> str:

@@ -94,6 +94,11 @@ from ultralytics.nn.modules import (
     MambaBlock,
     SwinBlock, 
     DETRAuxHead,
+    # attention modules
+    CA_Block,
+    A2_Attn,
+    CBAM_Block,
+    SE_Block,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1114,12 +1119,18 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             # HyperACEBlockStable: 输出通道由 args[2] 指定
             # args: [ch_high, ch_low, ch_out]
             c2 = int(args[2])
-        elif m in {SE, MixedAttention, MambaBlock, SwinBlock}:
-            # SE/MixedAttention/MambaBlock/SwinBlock: 保持通道不变
+        elif m in {SE, MixedAttention, MambaBlock, SwinBlock, SE_Block, CA_Block, A2_Attn, CBAM_Block}:
+            # SE/MixedAttention/MambaBlock/SwinBlock/新注意力模块: 保持通道不变
             c2 = ch[f]
             # MambaBlock和SwinBlock的参数处理  # 中文注释
             if m in {MambaBlock, SwinBlock}:
                 args = [ch[f], *args]  # 传入输入通道数作为第一个参数
+            # 新注意力模块的参数处理  # 中文注释
+            elif m in {CA_Block, CBAM_Block}:
+                args = [ch[f], *args]  # 传入输入通道数作为第一个参数
+            elif m is A2_Attn:
+                # A2_Attn: args应该是[num_areas, num_heads]，我们添加c1作为第一个参数
+                args = [ch[f], None, *args]  # [c1, c2=None, num_areas, num_heads]
         elif m in {Detect, DetectStable, WorldDetect, Segment, Pose, OBB, ImagePoolingAttn, v10Detect, DETRAuxHead}:
             # 确保f是列表，处理单输入和多输入情况  # 中文注释
             f_list = f if isinstance(f, (list, tuple)) else [f]

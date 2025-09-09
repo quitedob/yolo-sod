@@ -3,10 +3,12 @@
 # 作用：YOLO-SOD-Fusion增强版训练启动脚本（最小修复版：暂时移除 --hyp，确保可跑）
 
 echo "=============================================="
-echo "  YOLO-SOD-Fusion 增强版训练系统"
+echo "  YOLOv12-SOD-Fusion-v5 增强版训练系统"
 echo "=============================================="
 echo "集成模块："
-echo "  ★ MambaBlock / SwinBlock / DETR-Aux / BoundaryAwareLoss / DetectStable"
+echo "  ★ SE_Block / CBAM_Block / CA_Block / A2_Attn"
+echo "  ★ SwinBlock / DETR-Aux / BoundaryAwareLoss / DetectStable"
+echo "  ⚠️  MambaBlock暂时禁用（兼容性问题）"
 echo "=============================================="
 
 # 【重要】如需恢复自定义超参文件：
@@ -18,7 +20,7 @@ echo "=============================================="
 DEFAULT_DATA="/workspace/yolo/ultralytics/cfg/datasets/visdrone.yaml"
 DEFAULT_EPOCHS=500
 DEFAULT_IMGSZ=640
-DEFAULT_BATCH=16
+DEFAULT_BATCH=1
 DEFAULT_DEVICE=0
 DEFAULT_CLOSE_P2_UNTIL=30
 
@@ -61,9 +63,10 @@ python -c "import torch, ultralytics" 2>/dev/null || {
 echo "依赖检查通过，开始训练..."
 echo "=============================================="
 
-# 启动训练（去掉 --hyp，先确保训练跑通）
-python /workspace/yolo/train.py \
-  --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-stable.yaml \
+# 启动训练（使用新的YOLOv12-SOD-Fusion-v5分段训练脚本）
+# 注意：由于MambaBlock兼容性问题，使用简化版本
+python /workspace/yolo/train_yolov12_staged.py \
+  --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-simple.yaml \
   --data "$DATA_PATH" \
   --epochs $EPOCHS \
   --imgsz $IMG_SIZE \
@@ -71,22 +74,13 @@ python /workspace/yolo/train.py \
   --device $DEVICE \
   --workers 8 \
   --close_p2_until $CLOSE_P2_UNTIL \
-  --use_boundary_loss \
-  --use_detr_aux \
-  --edge_weight 1.0 \
-  --bce_weight 1.0 \
-  --iou_weight 0.0 \
-  --boundary_loss_weight 0.2 \
-  --lr0 0.01 \
-  --lrf 0.01 \
-  --optimizer auto \
-  --project runs_fusion \
-  --name yolo_sod_fusion_exp
+  --project runs_yolov12_staged \
+  --name yolov12_sod_fusion_v5_exp
 
 # 结果检查
 if [ $? -eq 0 ]; then
   echo "=============================================="
-  echo "训练完成！结果保存在: runs_fusion/yolo_sod_fusion_exp/"
+  echo "训练完成！结果保存在: runs_yolov12_staged/yolov12_sod_fusion_v5_exp/"
   echo "=============================================="
 else
   echo "=============================================="
