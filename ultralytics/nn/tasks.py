@@ -91,7 +91,6 @@ from ultralytics.nn.modules import (
     RecurrentAttentionFusionBlock,
     BiLevelRoutingAttentionFusionBlock,
     # custom fusion modules
-    MambaBlock,
     SwinBlock, 
     DETRAuxHead,
     # attention modules
@@ -1119,11 +1118,11 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             # HyperACEBlockStable: 输出通道由 args[2] 指定
             # args: [ch_high, ch_low, ch_out]
             c2 = int(args[2])
-        elif m in {SE, MixedAttention, MambaBlock, SwinBlock, SE_Block, CA_Block, A2_Attn, CBAM_Block}:
-            # SE/MixedAttention/MambaBlock/SwinBlock/新注意力模块: 保持通道不变
+        elif m in {SE, MixedAttention, SwinBlock, SE_Block, CA_Block, A2_Attn, CBAM_Block}:
+            # SE/MixedAttention/SwinBlock/新注意力模块: 保持通道不变
             c2 = ch[f]
-            # MambaBlock和SwinBlock的参数处理  # 中文注释
-            if m in {MambaBlock, SwinBlock}:
+            # SwinBlock的参数处理  # 中文注释
+            if m in {SwinBlock}:
                 args = [ch[f], *args]  # 传入输入通道数作为第一个参数
             # 新注意力模块的参数处理  # 中文注释
             elif m in {CA_Block, CBAM_Block}:
