@@ -44,22 +44,25 @@ class MambaBlock(nn.Module):
         self.out_proj = Conv1x1BN(c_hidden, c)  # 输出投影
         self.reduction = seq_reduction  # 序列长度缩减因子，降低计算复杂度
         
+        # 测试MambaBlock回退机制
+        print("Testing MambaBlock fallback mechanism...")
         try:
             # 尝试导入mamba-ssm库
             from mamba_ssm import Mamba
+            # 测试causal_conv1d兼容性
+            import torch
+            test_input = torch.randn(1, c_hidden, 16)
+            test_mamba = Mamba(d_model=c_hidden, d_state=16, d_conv=4, expand=2)
+            _ = test_mamba(test_input)  # 测试前向传播
+            
             self.use_mamba = True
-            self.mamba = Mamba(
-                d_model=c_hidden,  # 模型维度
-                d_state=16,  # 状态维度
-                d_conv=4,  # 卷积维度
-                expand=2  # 扩展因子
-            )
+            self.mamba = test_mamba
             print(f"[INFO] MambaBlock: 成功加载mamba-ssm，使用Mamba SSM进行长序列建模")
         except Exception as e:
-            # 无法导入mamba-ssm时使用GLU回退
+            # 无法导入mamba-ssm或兼容性问题时使用GLU回退
             self.use_mamba = False
             self.fallback = GLUBlock(c_hidden, expansion=2)
-            print(f"[WARNING] MambaBlock: 无法导入mamba-ssm ({e})，回退到GLU门控卷积")
+            print(f"[WARNING] MambaBlock: mamba-ssm不兼容 ({e})，回退到GLU门控卷积")
     
     def forward(self, x):
         B, C, H, W = x.shape

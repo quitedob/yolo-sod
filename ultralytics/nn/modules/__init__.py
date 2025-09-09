@@ -103,6 +103,7 @@ from .detect_stable import DetectStable  # 导入可控Detect  # 中文注释
 from .recurrent_attention_fusion_block import RecurrentAttentionFusionBlock  # 导入循环-注意力融合模块  # 中文注释
 from .braf_block import BiLevelRoutingAttentionFusionBlock  # 导入BRAF模块  # 中文注释
 # 导入自定义融合模块  # 中文注释
+from .blocks_mamba import MambaBlock  # 导入Mamba状态空间模块（带回退机制）  # 中文注释
 from .blocks_transformer import SwinBlock  # 导入Swin Transformer模块  # 中文注释
 from .heads_detr_aux import DETRAuxHead  # 导入DETR辅助头  # 中文注释
 from .ca_block import CA_Block  # 导入坐标注意力模块  # 中文注释
@@ -226,6 +227,7 @@ __all__ = (
     # BRAF
     "BiLevelRoutingAttentionFusionBlock",
     # custom fusion modules
+    "MambaBlock",
     "SwinBlock",
     "DETRAuxHead",
     # attention modules

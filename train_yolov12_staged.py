@@ -12,6 +12,72 @@ from copy import deepcopy
 from ultralytics import YOLO
 from ultralytics.utils import LOGGER
 
+def register_custom_modules():
+    """注册自定义算子到 Ultralytics 命名空间（Mamba/Swin/DETR-Aux/边界损失/追踪/DetectStable）"""
+    import ultralytics.nn.modules as U
+    # 可选：Mamba
+    try:
+        from ultralytics.nn.modules.blocks_mamba import MambaBlock
+        U.MambaBlock = MambaBlock
+    except Exception as e:
+        print(f"[WARN] MambaBlock 导入失败（mamba-ssm 可能未完全可用）：{e}")
+    # 其他模块
+    try:
+        from ultralytics.nn.modules.blocks_transformer import SwinBlock
+        U.SwinBlock = SwinBlock
+    except Exception as e:
+        print(f"[WARN] SwinBlock 导入失败: {e}")
+    try:
+        from ultralytics.nn.modules.heads_detr_aux import DETRAuxHead
+        U.DETRAuxHead = DETRAuxHead
+    except Exception as e:
+        print(f"[WARN] DETRAuxHead 导入失败: {e}")
+    try:
+        from ultralytics.nn.modules.loss_boundary import BoundaryAwareLoss
+        U.BoundaryAwareLoss = BoundaryAwareLoss
+    except Exception as e:
+        print(f"[WARN] BoundaryAwareLoss 导入失败: {e}")
+    try:
+        from ultralytics.nn.modules.tracker_kf_lstm import MultiObjectTracker
+        U.MultiObjectTracker = MultiObjectTracker
+    except Exception as e:
+        print(f"[WARN] MultiObjectTracker 导入失败: {e}")
+        
+    # ★ 注册 DetectStable（若 YAML 用到了它，必须注册）
+    try:
+        from ultralytics.nn.modules.detect_stable import DetectStable
+        U.DetectStable = DetectStable
+    except Exception as e:
+        print(f"[WARN] DetectStable 导入失败：{e}")
+    
+    # ★ 注册新的注意力模块
+    try:
+        from ultralytics.nn.modules.ca_block import CA_Block
+        U.CA_Block = CA_Block
+    except Exception as e:
+        print(f"[WARN] CA_Block 导入失败：{e}")
+    
+    try:
+        from ultralytics.nn.modules.a2_attn import A2_Attn
+        U.A2_Attn = A2_Attn
+    except Exception as e:
+        print(f"[WARN] A2_Attn 导入失败：{e}")
+    
+    try:
+        from ultralytics.nn.modules.cbam_block import CBAM_Block
+        U.CBAM_Block = CBAM_Block
+    except Exception as e:
+        print(f"[WARN] CBAM_Block 导入失败：{e}")
+    
+    # ★ 注册 SE_Block 别名
+    try:
+        from ultralytics.nn.modules.smallobj_modules import SE_Block
+        U.SE_Block = SE_Block
+    except Exception as e:
+        print(f"[WARN] SE_Block 导入失败：{e}")
+    
+    print("[INFO] 成功注册自定义模块: MambaBlock, SwinBlock, DETRAuxHead, DetectStable, CA_Block, A2_Attn, CBAM_Block, SE_Block 等")
+
 def create_hcp_400_config():
     """Create the HCP-400 staged training configuration"""
     hcp_config = {
@@ -153,7 +219,7 @@ def create_p2_toggle_callback(close_p2_until=30):
 
 def main():
     parser = argparse.ArgumentParser(description="YOLOv12-SOD-Fusion-v5 Staged Training Script")
-    parser.add_argument('--cfg', default='ultralytics/cfg/models/new/yolov12-sod-fusion-v5-simple.yaml', 
+    parser.add_argument('--cfg', default='ultralytics/cfg/models/new/yolov12-sod-fusion-v5.yaml', 
                        help='Model configuration YAML file path')
     parser.add_argument('--data', default='ultralytics/cfg/datasets/visdrone.yaml',
                        help='Dataset configuration YAML file path')
@@ -199,6 +265,10 @@ def main():
     if not os.path.exists(args.data):
         print(f"❌ Dataset config file not found: {args.data}")
         sys.exit(1)
+    
+    # Register custom modules before YOLO model initialization
+    print("🔧 Registering custom modules...")
+    register_custom_modules()
     
     # Initialize YOLO model
     print("🔧 Initializing YOLO model...")

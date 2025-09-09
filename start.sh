@@ -8,7 +8,7 @@ echo "=============================================="
 echo "集成模块："
 echo "  ★ SE_Block / CBAM_Block / CA_Block / A2_Attn"
 echo "  ★ SwinBlock / DETR-Aux / BoundaryAwareLoss / DetectStable"
-echo "  ⚠️  MambaBlock暂时禁用（兼容性问题）"
+echo "  ★ MambaBlock（自动回退到GLU门控卷积）"
 echo "=============================================="
 
 # 【重要】如需恢复自定义超参文件：
@@ -64,9 +64,9 @@ echo "依赖检查通过，开始训练..."
 echo "=============================================="
 
 # 启动训练（使用新的YOLOv12-SOD-Fusion-v5分段训练脚本）
-# 注意：由于MambaBlock兼容性问题，使用简化版本
+# 注意：MambaBlock现在有自动回退机制，可以使用完整版本
 python /workspace/yolo/train_yolov12_staged.py \
-  --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-simple.yaml \
+  --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5.yaml \
   --data "$DATA_PATH" \
   --epochs $EPOCHS \
   --imgsz $IMG_SIZE \
