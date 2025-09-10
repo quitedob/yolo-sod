@@ -20,7 +20,7 @@ echo "=============================================="
 DEFAULT_DATA="/workspace/yolo/ultralytics/cfg/datasets/visdrone.yaml"
 DEFAULT_EPOCHS=500
 DEFAULT_IMGSZ=640
-DEFAULT_BATCH=1
+DEFAULT_BATCH=16
 DEFAULT_DEVICE=0
 DEFAULT_CLOSE_P2_UNTIL=30
 
@@ -66,7 +66,7 @@ echo "=============================================="
 # 启动训练（使用新的YOLOv12-SOD-Fusion-v5分段训练脚本）
 # 注意：MambaBlock现在有自动回退机制，可以使用完整版本
 python /workspace/yolo/train_yolov12_staged.py \
-  --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5.yaml \
+  --cfg /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-simple.yaml \
   --data "$DATA_PATH" \
   --epochs $EPOCHS \
   --imgsz $IMG_SIZE \
