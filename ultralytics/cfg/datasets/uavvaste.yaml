@@ -1,0 +1,12 @@
+path: /workspace/datasets/uavvaste    # 你的脚本 dest_path（请按需要修改）
+train: train/images
+val: val/images
+test: test/images
+
+# 类别数量（UAVVaste 数据集中主要为“垃圾/废弃物”的实例 -> 单类）
+nc: 1
+
+# 类名：作者/论文里一般称为 rubbish / trash / litter
+# 我在这里用 'rubbish'（和论文风格接近）；如果你习惯用 'trash' 或 'litter'，可直接改为那一个字符串。
+names:
+  0: 'rubbish'
