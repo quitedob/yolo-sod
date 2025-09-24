@@ -13,7 +13,6 @@ data
 *.jpeg
 pretrained
 logs
-runs
 *.mp4
 .DS_Store
 .idea
