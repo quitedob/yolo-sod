@@ -1,0 +1,72 @@
+# /workspace/yolo/ultralytics/cfg/models/new/yolov12-sod-fusion-v5-E5.yaml
+# 作用: 这是为 E5 消融实验定制的 YOLOv5-simple 模型配置。
+# E5 目标: 在 E4 的基础上，加入 SwinBlock 注意力模块。
+# 与 E4 的区别: 在 backbone 和 neck 的特定位置重新加入了 SwinBlock。
+
+nc: 10  # 类别数量 (VisDrone 数据集有 10 类)
+depth_multiple: 0.33
+width_multiple: 0.50
+ch: 3   # 输入通道
+
+# E5 主干网络 (Backbone) - 保留 SE, CBAM, 和 SwinBlock
+backbone:
+  # Stage 1
+  - [ -1, 1, Conv, [64, 3, 2] ]             # 0: stride 2 conv -> P1/2
+  - [ -1, 1, SE_Block, [64] ]               # 1: E5: KEPT SE attention
+  - [ -1, 1, Conv, [128, 3, 2] ]            # 2: -> P2/4
+  - [ -1, 3, C2f, [128, True] ]             # 3: CSP block (Backbone P2 output)
+  - [ -1, 1, CBAM_Block, [128, 16] ]        # 4: E5: KEPT CBAM attention
+  - [ -1, 1, Conv, [256, 3, 2] ]            # 5: -> P3/8
+  - [ -1, 6, C2f, [256, True] ]             # 6: CSP block (Backbone P3 output)
+  - [ -1, 1, Conv, [512, 3, 2] ]            # 7: -> P4/16
+  - [ -1, 3, C2f, [512, True] ]             # 8: CSP block
+  - [ -1, 1, SwinBlock, [4, 7] ]            # 9: E5: KEPT Swin Transformer (Backbone P4 output)
+  - [ -1, 1, Conv, [1024, 3, 2] ]           # 10: -> P5/32
+  - [ -1, 2, C2f, [1024, True] ]            # 11: CSP block
+  # - [ -1, 1, A2_Attn, [8, 8] ]            # E5: REMOVED
+  - [ -1, 1, SPPF, [1024, 5] ]              # 12: SPPF (Backbone P5 output)
+
+# E5 颈部网络 (Neck) - 保留 SE, CBAM, Swin, 和 P2 路径
+neck:
+  # Top-Down path (PANet)
+  # P5 -> P4
+  - [ -1, 1, Conv, [512, 1, 1] ]                 # 13: reduce channel
+  - [ -1, 1, nn.Upsample, [None, 2, 'nearest'] ]  # 14: upsample
+  - [ [ -1, 9 ], 1, Concat, [1] ]                 # 15: concat P5 upsampled with P4 from backbone (new layer 9)
+  - [ -1, 3, C2f, [512, True] ]                   # 16: fusion at P4
+  - [ -1, 1, CBAM_Block, [512, 16] ]              # 17: E5: KEPT CBAM attention
+  
+  # P4 -> P3
+  - [ -1, 1, Conv, [256, 1, 1] ]                 # 18: reduce channel
+  - [ -1, 1, nn.Upsample, [None, 2, 'nearest'] ]  # 19: upsample
+  - [ [ -1, 6 ], 1, Concat, [1] ]                 # 20: concat with P3 from backbone (new layer 6)
+  - [ -1, 3, C2f, [256, True] ]                   # 21: fusion at P3
+  - [ -1, 1, SE_Block, [256] ]                    # 22: E5: KEPT SE attention
+  
+  # P3 -> P2
+  - [ -1, 1, Conv, [128, 1, 1] ]                 # 23: reduce channel
+  - [ -1, 1, nn.Upsample, [None, 2, 'nearest'] ]  # 24: upsample
+  - [ [ -1, 3 ], 1, Concat, [1] ]                 # 25: concat with P2 from backbone (new layer 3)
+  - [ -1, 3, C2f, [128, True] ]                   # 26: fusion at P2
+  - [ -1, 1, SwinBlock, [2, 7] ]                  # 27: E5: KEPT Swin Transformer (P2 head output)
+
+  # Bottom-Up path
+  # P2 -> P3
+  - [ 27, 1, Conv, [256, 3, 2] ]                  # 28: downsample P2->P3, input from P2 fusion (layer 27)
+  - [ [ -1, 22 ], 1, Concat, [1] ]                # 29: concat with P3 from top-down path (new layer 22)
+  - [ -1, 3, C2f, [256, True] ]                   # 30: fusion at P3 (P3 head output)
+  # - [ -1, 1, CA_Block, [256] ]                  # E5: REMOVED
+
+  # P3 -> P4
+  - [ -1, 1, Conv, [512, 3, 2] ]                  # 31: downsample P3->P4
+  - [ [ -1, 17 ], 1, Concat, [1] ]                # 32: concat with P4 from top-down path (new layer 17)
+  - [ -1, 3, C2f, [512, True] ]                   # 33: fusion at P4 (P4 head output)
+
+  # P4 -> P5
+  - [ -1, 1, Conv, [1024, 3, 2] ]                 # 34: downsample P4->P5
+  - [ [ -1, 12 ], 1, Concat, [1] ]                # 35: concat with P5 from backbone (new layer 12, after SPPF)
+  - [ -1, 2, C2f, [1024, True] ]                  # 36: fusion at P5 (P5 head output)
+
+# E5 检测头 (Head) - 使用 P2, P3, P4, P5 四个尺度的输出
+head:
+  - [ [27, 30, 33, 36], 1, Detect, [nc] ] # Detect from P2(27), P3(30), P4(33), P5(36)
