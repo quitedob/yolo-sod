@@ -8,7 +8,7 @@ This repository contains the official implementation of the paper **"A Synergist
 ## Authors
 
 - Zhaoyang Zhang¹
-- Qikun Shi¹* (Corresponding author: shiqikun@wust.edu.cn)
+- Qikun Shi¹* 
 - Xiao Wang²
 - Jiayi Lai³
 
