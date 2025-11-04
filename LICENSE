@@ -1,0 +1,45 @@
+# YOLO-SOD 项目许可证
+
+## 许可证概述
+
+本项目（YOLO-SOD: A Synergistic Paradigm of Heterogeneous Attention and Curriculum Learning for Small Object Detection）采用自定义许可证。
+
+## 使用条款
+
+### 个人使用
+- ✅ **免费**: 个人用户可以免费使用、修改、分发本项目的源代码
+- ✅ **学术研究**: 允许用于学术研究、教育和非商业目的
+- ✅ **开源贡献**: 允许基于本项目进行开源贡献和衍生作品
+
+### 商业使用
+- ⚠️ **需要洽谈**: 任何商业用途（包括但不限于产品集成、服务提供、商业分发等）需要与项目作者联系并获得书面许可
+- 📧 **联系方式**: 请发送邮件至 dobqop999@gmail.com 进行商业许可洽谈
+
+## 免责声明
+
+本项目按"原样"提供，不提供任何明示或暗示的保证。作者不对使用本项目造成的任何直接或间接损害承担责任。
+
+## 引用要求
+
+如果您在学术论文或技术报告中使用本项目，请引用以下论文：
+
+```bibtex
+@article{zhang2025synergistic,
+  title={A Synergistic Paradigm of Heterogeneous Attention and Curriculum Learning for Small Object Detection},
+  author={Zhang, Zhaoyang and Shi, Qikun and Wang, Xiao and Lai, Jiayi},
+  journal={IEEE Transactions on Pattern Analysis and Machine Intelligence},
+  year={2025},
+  publisher={IEEE}
+}
+```
+
+## 作者信息
+
+- Zhaoyang Zhang
+- Qikun Shi (通讯作者)
+- Xiao Wang
+- Jiayi Lai
+
+## 版权声明
+
+Copyright (c) 2024-2025 YOLO-SOD 项目团队. 保留所有权利。
