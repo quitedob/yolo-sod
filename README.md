@@ -1,7 +1,7 @@
 # YOLO-SOD: A Synergistic Paradigm of Heterogeneous Attention and Curriculum Learning for Small Object Detection
 
 [![arXiv](https://github.com/quitedob/yolo-sod/blob/main/IEEE_2025_UAV_Detection.pdf)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![License](https://img.shields.io/badge/License-Custom-blue.svg)](LICENSE)
 
 This repository contains the official implementation of the paper **"A Synergistic Paradigm of Heterogeneous Attention and Curriculum Learning for Small Object Detection"** published in the IEEE Transactions on Pattern Analysis and Machine Intelligence (TPAMI).
 
@@ -179,9 +179,10 @@ This work is supported by the National Nature Science Foundation of China (Grant
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project uses a custom license that allows free personal and academic use but requires negotiation for commercial applications - see the [LICENSE](LICENSE) file for details.
 
 ## Contact
 
 For questions or collaborations, please contact:
 - Zhaoyang Zhang: dobqop999@gmail.com
+
